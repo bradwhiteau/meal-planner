@@ -1,1 +1,4 @@
 .claude/
+# Data never belongs in the repo (this folder syncs to Drive)
+*.json
+meal-planner-data/

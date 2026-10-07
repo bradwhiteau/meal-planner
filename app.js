@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.1.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -20,7 +20,7 @@
   const WEEKDAY = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];   // index within a week plan
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const DEFAULT_SETTINGS = {
-    bodyweightKg: 97, proteinTargetGPerKg: 2.0,
+    bodyweightKg: null, proteinTargetGPerKg: 2.0,
     reminderTimes: { evening: '20:00', batchCook: '10:00' },
     stores: ['Costco', 'Butcher', 'Market', 'Supermarket'],
   };
@@ -103,11 +103,13 @@
       const i = S[store].findIndex(x => x.id === r.id);
       if (i < 0) S[store].push(r); else S[store][i] = r;
     }
+    markDirty();
     return write(store, recs);
   }
   function remove(store, ids) {
     ids = Array.isArray(ids) ? ids : [ids];
     S[store] = S[store].filter(x => !ids.includes(x.id));
+    markDirty();
     return write(store, [], ids);
   }
   const byId = (store, id) => S[store].find(x => x.id === id);
@@ -115,35 +117,11 @@
   const ingName = id => { const i = byId('ingredients', id); return i ? i.name : '(deleted ingredient)'; };
   const sortByName = arr => [...arr].sort((a, b) => a.name.localeCompare(b.name));
 
-  async function seed() {
-    const t = nowIso(), SEED = window.SEED;
-    const stamp = o => ({ id: uuid(), createdAt: t, updatedAt: t, ...o });
-    const ingKey = {};
-    const ingredients = SEED.ingredients.map(i => {
-      const r = stamp({ name: i.name, defaultUnit: i.unit, store: i.store, aisle: i.aisle, isLocal: !!i.local, lastPrice: null });
-      if (i.pantryKey) r.pantryKey = i.pantryKey;
-      ingKey[i.key] = r.id; return r;
-    });
-    const recipes = SEED.recipes.map(r => {
-      const rec = stamp({
-        name: r.name, servings: r.servings, proteinPerServingG: null, lactose: r.lactose, tags: r.tags, method: r.method || '',
-        ingredients: r.ingredients.map(([k, qty, unit]) => ({ ingredientId: ingKey[k], qty, unit })),
-      });
-      if (r.shake) rec.isShake = true;
-      return rec;
-    });
-    const recId = Object.fromEntries(recipes.map(r => [r.name, r.id]));
-    const slot = v => (v.recipe ? { recipeId: recId[v.recipe], servings: 1, cook: v.cook || null }
-      : v.leftover ? { leftoverOf: { day: v.leftover[0], slot: v.leftover[1] }, servings: 1, freezer: !!v.freezer }
-        : { text: v.text, proteinG: null });
-    const template = stamp({
-      weekStart: null, templateName: SEED.template.name,
-      days: SEED.template.days.map(d => ({ date: null, training: d.training, slots: Object.fromEntries(Object.entries(d.slots).map(([k, v]) => [k, slot(v)])) })),
-    });
-    const pantry = SEED.pantry.map(([k, qty, unit]) => stamp({ ingredientId: ingKey[k], qty, unit }));
-    const st = stamp({ ...clone(DEFAULT_SETTINGS) }); st.id = 'settings';
-    await write('ingredients', ingredients); await write('recipes', recipes); await write('weekPlans', [template]);
-    await write('pantryItems', pantry); await write('settings', [st]);
+  // A fresh install starts empty: the public site carries no personal data.
+  // Recipes and plans arrive from the Drive inbox or an imported file.
+  async function firstRun() {
+    const t = nowIso();
+    await write('settings', [{ id: 'settings', createdAt: t, updatedAt: t, ...clone(DEFAULT_SETTINGS) }]);
   }
 
   async function loadAll() {
@@ -384,20 +362,24 @@
     const cell = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     return [cols.join(','), ...rows.map(r => cols.map(c => cell(r[c])).join(','))].join('\n');
   }
+  // The full export: the manual Export file and the Drive outbox's latest.json are the same document.
+  function exportJson() {
+    return JSON.stringify({
+      app: 'meal-planner', schemaVersion: SCHEMA_VERSION, appVersion: APP_VERSION, exportedAt: nowIso(),
+      description: 'Meal Planner data, one array per store. mealLogs: what was eaten (date, slot, planned vs off-plan, proteinG). ' +
+        'weekPlans: Monday-start weeks (templateName set = template); day.training uses Lift Log session types (lift/walk/hiit/rest) so it joins Lift Log by date. ' +
+        'Slots hold {recipeId, servings, cook}, {leftoverOf:{day 0=Mon, slot}} or {text}. shoppingItems: per week, price in AUD for the line. Quantities are metric. ' +
+        'To change data, write a patch file to the inbox; see DATA.md in the meal-planner repo.',
+      stores: Object.fromEntries(STORES.map(s => [s, S[s]])),
+    }, null, 2);
+  }
   function exportFiles() {
     const base = `meal-planner-${todayStr()}`;
     const slotIdx = s => SLOTS.indexOf(s);
     const logs = [...S.mealLogs].sort((a, b) => a.date.localeCompare(b.date) || slotIdx(a.slot) - slotIdx(b.slot) || a.createdAt.localeCompare(b.createdAt));
     const shop = [...S.shoppingItems].sort((a, b) => a.weekStart.localeCompare(b.weekStart));
-    const json = {
-      app: 'meal-planner', schemaVersion: SCHEMA_VERSION, appVersion: APP_VERSION, exportedAt: nowIso(),
-      description: 'Meal Planner data, one array per store. mealLogs: what was eaten (date, slot, planned vs off-plan, proteinG). ' +
-        'weekPlans: Monday-start weeks (templateName set = template); day.training uses Lift Log session types (lift/walk/hiit/rest) so it joins Lift Log by date. ' +
-        'Slots hold {recipeId, servings, cook}, {leftoverOf:{day 0=Mon, slot}} or {text}. shoppingItems: per week, price in AUD for the line. Quantities are metric.',
-      stores: Object.fromEntries(STORES.map(s => [s, S[s]])),
-    };
     return [
-      { name: `${base}.json`, text: JSON.stringify(json, null, 2), type: 'application/json' },
+      { name: `${base}.json`, text: exportJson(), type: 'application/json' },
       { name: `${base}-meal-log.csv`, text: toCsv(logs.map(mealRow), MEAL_COLS), type: 'text/csv' },
       { name: `${base}-shopping.csv`, text: toCsv(shop.map(shopRow), SHOP_COLS), type: 'text/csv' },
     ];
@@ -411,25 +393,309 @@
   const shareFiles = () => exportFiles().map(f => new File([f.text], f.name, { type: f.type }));
   const canShare = () => { try { return !!(navigator.canShare && navigator.canShare({ files: shareFiles() })); } catch (e) { return false; } };
 
-  // Merges by id: whichever copy was updated last wins, so restoring an older file never clobbers newer edits.
+  // ---------- incoming files (manual import and the Drive inbox) ----------
+  // A file is either a patch ({kind: 'patch', patchId, upserts, deletes}) or a full export (no kind, {stores}).
+  // Nothing from a file is ever executed: it's parsed as JSON, checked, and only known stores are used.
+  const MAX_FILE_BYTES = 5 * 1024 * 1024, MAX_RECORDS = 20000;
+  const STORE_LABEL = { ingredients: 'ingredient', recipes: 'recipe', weekPlans: 'week plan', shoppingItems: 'shopping item',
+    pantryItems: 'pantry item', mealLogs: 'meal log', settings: 'settings' };
+  const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+  const isStr = v => typeof v === 'string';
+  const tsOf = r => { const t = Date.parse(r && r.updatedAt); return Number.isFinite(t) ? t : 0; };
+  const plural = (n, store) => `${n} ${STORE_LABEL[store]}${n > 1 && store !== 'settings' ? 's' : ''}`;
+  // Minimum shape per store, so a bad record can't break the screens. Fills harmless defaults.
+  const SHAPES = {
+    ingredients: r => isStr(r.name) && r.name.trim() !== '',
+    recipes: r => {
+      if (!isStr(r.name) || !Array.isArray(r.ingredients) || !r.ingredients.every(i => isObj(i) && isStr(i.ingredientId))) return false;
+      r.tags = Array.isArray(r.tags) ? r.tags.filter(isStr) : [];
+      r.lactose = LACTOSE[r.lactose] ? r.lactose : 'none';
+      r.servings = Number(r.servings) > 0 ? Number(r.servings) : 1;
+      r.method = isStr(r.method) ? r.method : '';
+      return true;
+    },
+    weekPlans: r => Array.isArray(r.days) && r.days.length === 7 && r.days.every(d => isObj(d) && isObj(d.slots))
+      && (r.weekStart == null || /^\d{4}-\d{2}-\d{2}$/.test(r.weekStart)),
+    shoppingItems: r => isStr(r.weekStart),
+    pantryItems: r => isStr(r.ingredientId),
+    mealLogs: r => isStr(r.date) && /^\d{4}-\d{2}-\d{2}$/.test(r.date),
+    settings: r => r.id === 'settings' && Array.isArray(r.stores),
+  };
+  function parseIncoming(text) {
+    if (text.length > MAX_FILE_BYTES) throw new Error('File is too large');
+    let d;
+    try { d = JSON.parse(text); } catch (e) { throw new Error('Not valid JSON'); }
+    if (!isObj(d) || d.app !== 'meal-planner') throw new Error('Not a Meal Planner file');
+    if (d.schemaVersion !== SCHEMA_VERSION) throw new Error(`Schema version ${d.schemaVersion} isn't supported (this app reads ${SCHEMA_VERSION})`);
+    let ups, dels = {};
+    if (d.kind === 'patch') {
+      if (!isStr(d.patchId) || !d.patchId) throw new Error('Patch has no patchId');
+      ups = d.upserts || {}; dels = d.deletes || {};
+    } else if (d.kind == null) {
+      ups = d.stores;
+    } else throw new Error(`Unknown kind "${d.kind}"`);
+    if (!isObj(ups) || !isObj(dels)) throw new Error('upserts and deletes must be objects');
+    let n = 0;
+    for (const [store, list] of Object.entries(ups)) {
+      if (!STORES.includes(store)) throw new Error(`Unknown store "${store}"`);
+      if (!Array.isArray(list)) throw new Error(`${store} must be a list`);
+      list.forEach((r, i) => {
+        if (!isObj(r) || !isStr(r.id) || !r.id || r.id.length > 100) throw new Error(`${store}[${i}] has no valid id`);
+        if (d.kind === 'patch' && !tsOf(r)) throw new Error(`${store}[${i}] needs an updatedAt timestamp`);
+        if (!SHAPES[store](r)) throw new Error(`${store}[${i}] (${r.name || r.id}) is missing required fields`);
+        if (!r.createdAt) r.createdAt = r.updatedAt || nowIso();
+      });
+      n += list.length;
+    }
+    for (const [store, ids] of Object.entries(dels)) {
+      if (!STORES.includes(store) || store === 'settings') throw new Error(`Can't delete from "${store}"`);
+      if (!Array.isArray(ids) || !ids.every(isStr)) throw new Error(`deletes.${store} must be a list of ids`);
+      n += ids.length;
+    }
+    if (n > MAX_RECORDS) throw new Error('Too many records');
+    return {
+      kind: d.kind === 'patch' ? 'patch' : 'export', patchId: d.patchId || null,
+      note: isStr(d.note) ? d.note.slice(0, 500) : '', author: isStr(d.author) ? d.author.slice(0, 50) : '', ups, dels,
+    };
+  }
+  // Merge rule: a record is taken when it's new, or when its updatedAt is later than the copy here.
+  function planMerge(inc) {
+    const out = { ups: {}, dels: {}, counts: [] };
+    let older = 0;
+    for (const [store, list] of Object.entries(inc.ups)) {
+      const fresh = list.filter(r => { const cur = byId(store, r.id); return !cur || tsOf(r) > tsOf(cur); });
+      const added = fresh.filter(r => !byId(store, r.id)).length, updated = fresh.length - added;
+      older += list.length - fresh.length;
+      if (fresh.length) out.ups[store] = fresh;
+      if (added) out.counts.push(`${plural(added, store)} new`);
+      if (updated) out.counts.push(`${plural(updated, store)} updated`);
+    }
+    for (const [store, ids] of Object.entries(inc.dels)) {
+      const here = ids.filter(id => byId(store, id));
+      if (here.length) { out.dels[store] = here; out.counts.push(`${plural(here.length, store)} deleted`); }
+    }
+    out.changes = Object.values(out.ups).reduce((t, l) => t + l.length, 0) + Object.values(out.dels).reduce((t, l) => t + l.length, 0);
+    out.summary = (out.counts.join(', ') || 'Nothing to change') + (older ? ` (${older} already up to date here)` : '');
+    return out;
+  }
+  async function applyMerge(plan) {
+    for (const [store, list] of Object.entries(plan.ups)) {
+      for (const r of list) { const i = S[store].findIndex(x => x.id === r.id); if (i < 0) S[store].push(r); else S[store][i] = r; }
+      await write(store, list);
+    }
+    for (const [store, ids] of Object.entries(plan.dels)) {
+      S[store] = S[store].filter(x => !ids.includes(x.id));
+      await write(store, [], ids);
+    }
+    settings = S.settings.find(x => x.id === 'settings');
+    settings.reminderTimes = { ...DEFAULT_SETTINGS.reminderTimes, ...(settings.reminderTimes || {}) };
+    if (plan.changes) markDirty();
+  }
+
   async function importFile(file) {
     try {
-      const data = JSON.parse(await file.text());
-      if (data.app !== 'meal-planner' || !data.stores) throw new Error('Not a Meal Planner export');
-      if (data.schemaVersion > SCHEMA_VERSION) throw new Error('This file is from a newer version of the app; update first');
-      const counts = STORES.filter(s => s !== 'settings').map(s => `${(data.stores[s] || []).length} ${s}`).join(', ');
-      if (!confirm(`Import ${counts}?\nRecords already here keep whichever copy was changed most recently.`)) return;
-      let n = 0;
-      for (const s of STORES) {
-        const fresh = (data.stores[s] || []).filter(r => r && r.id && (!byId(s, r.id) || (r.updatedAt || '') > (byId(s, r.id).updatedAt || '')));
-        n += fresh.length;
-        for (const r of fresh) { const i = S[s].findIndex(x => x.id === r.id); if (i < 0) S[s].push(r); else S[s][i] = r; }
-        if (fresh.length) await write(s, fresh);
-      }
-      settings = S.settings.find(x => x.id === 'settings');
-      settings.reminderTimes = { ...DEFAULT_SETTINGS.reminderTimes, ...(settings.reminderTimes || {}) };
-      closeModal(); toast(`Imported ${n} records`);
+      const inc = parseIncoming(await file.text()), plan = planMerge(inc);
+      if (!plan.changes) return toast('Nothing new in that file');
+      if (!confirm(`Import ${file.name}?\n${inc.note ? inc.note + '\n' : ''}${plan.summary}`)) return;
+      await applyMerge(plan);
+      if (inc.patchId) remember('applied', 'patch:' + inc.patchId);
+      closeModal(); toast(`Imported: ${plan.summary}`);
     } catch (e) { toast('Import failed: ' + e.message); }
+  }
+
+  // ---------- Google Drive mailbox ----------
+  // Inbox: patch files (or full exports) written by Claude, read here and applied on request.
+  // Outbox: latest.json plus one dated snapshot per day (last 14 kept), written here for Claude to read.
+  // The access token lives in memory only. Folder IDs live on this device, never in the repo.
+  const CLIENT_ID = (window.MP_CONFIG || {}).googleClientId || '';
+  const SCOPES = ['https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/drive.file'];
+  const DRIVE_API = 'https://www.googleapis.com/drive/v3', DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
+  const KEEP_SNAPSHOTS = 14, OUTBOX_DELAY = 60000;
+  const SNAPSHOT_RE = /^meal-planner-\d{4}-\d{2}-\d{2}\.json$/;
+  const FOLDER_RE = /^[\w-]{10,100}$/;
+  const drive = { token: null, expires: 0, pending: [], busy: false, error: '', lastCheck: 0 };
+  let outboxTimer = null;
+
+  // Device-only sync state: folder IDs, applied/skipped files, outbox status.
+  function dget() { try { return JSON.parse(localStorage.getItem('mp.drive') || '{}'); } catch (e) { return {}; } }
+  function dset(patch) { const v = { ...dget(), ...patch }; try { localStorage.setItem('mp.drive', JSON.stringify(v)); } catch (e) { /* ignore */ } return v; }
+  function remember(list, key) { const d = dget(); dset({ [list]: { ...(d[list] || {}), [key]: nowIso() } }); }
+  const driveReady = () => { const d = dget(); return !!(CLIENT_ID && FOLDER_RE.test(d.inboxId || '') && FOLDER_RE.test(d.outboxId || '')); };
+  const signedIn = () => !!drive.token && Date.now() < drive.expires - 60000;
+
+  // Google's sign-in library loads only once Drive is set up, so a fresh visitor makes no Google calls.
+  let gisPromise = null;
+  function loadGis() {
+    if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+    if (!gisPromise) gisPromise = new Promise((res, rej) => {
+      const el = document.createElement('script');
+      el.src = 'https://accounts.google.com/gsi/client'; el.async = true;
+      el.onload = res; el.onerror = () => { gisPromise = null; rej(new Error("Couldn't reach Google")); };
+      document.head.appendChild(el);
+    });
+    return gisPromise;
+  }
+  // Must run straight from a tap: Google's sign-in opens a popup.
+  function signIn() {
+    if (!(window.google && google.accounts && google.accounts.oauth2)) {
+      loadGis().then(() => toast('Ready: tap again to sign in'), e => toast(e.message));
+      return Promise.reject(new Error('Loading Google sign-in…'));
+    }
+    return new Promise((res, rej) => {
+      google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID, scope: SCOPES.join(' '), prompt: '',
+        callback: r => {
+          if (r.error) return rej(new Error(r.error_description || r.error));
+          if (!google.accounts.oauth2.hasGrantedAllScopes(r, ...SCOPES)) return rej(new Error('Drive access wasn\'t granted. Tick both boxes when Google asks.'));
+          drive.token = r.access_token; drive.expires = Date.now() + (Number(r.expires_in) || 3600) * 1000; drive.error = '';
+          res();
+        },
+        error_callback: e => rej(new Error(e && e.type === 'popup_closed' ? 'Sign-in cancelled' : (e && (e.message || e.type)) || 'Sign-in failed')),
+      }).requestAccessToken();
+    });
+  }
+  function signOut() {
+    if (drive.token) {
+      const body = new URLSearchParams({ token: drive.token });
+      fetch('https://accounts.google.com/o/oauth2/revoke', { method: 'POST', mode: 'no-cors', body }).catch(() => {});
+    }
+    drive.token = null; drive.expires = 0; drive.pending = [];
+  }
+  async function api(url, opts = {}) {
+    if (!signedIn()) throw new Error('Not signed in to Google');
+    const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + drive.token } });
+    if (r.status === 401) { drive.token = null; throw new Error('Google sign-in expired'); }
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      try { const j = await r.json(); msg = (j.error && j.error.message) || msg; } catch (e) { /* ignore */ }
+      const err = new Error(msg); err.status = r.status; throw err;
+    }
+    return r;
+  }
+  async function listFolder(folderId) {
+    if (!FOLDER_RE.test(folderId)) throw new Error('Folder ID looks wrong');
+    const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+    const r = await api(`${DRIVE_API}/files?q=${q}&fields=${encodeURIComponent('files(id,name,size,modifiedTime,mimeType)')}&pageSize=500&orderBy=name`);
+    return (await r.json()).files || [];
+  }
+
+  // Lists inbox files not yet applied or skipped, downloads and checks each one.
+  async function checkInbox() {
+    const d = dget(), applied = d.applied || {}, skipped = d.skipped || {}, seen = d.seen || {};
+    const files = (await listFolder(d.inboxId)).filter(f => /\.json$/i.test(f.name) && f.mimeType !== 'application/vnd.google-apps.folder');
+    const pending = [];
+    for (const f of files) {
+      const fileKey = `file:${f.id}:${f.modifiedTime}`;
+      // A file is known by its patchId once read (or by id + modified time if it has none or can't be read).
+      const known = seen[f.id] && seen[f.id].mod === f.modifiedTime ? seen[f.id].key : fileKey;
+      if (applied[known] || skipped[known]) continue;
+      const item = { file: f, key: known };
+      seen[f.id] = { mod: f.modifiedTime, key: fileKey };
+      if (Number(f.size) > MAX_FILE_BYTES) { item.error = 'File is too large'; pending.push(item); continue; }
+      try {
+        const text = await (await api(`${DRIVE_API}/files/${f.id}?alt=media`)).text();
+        item.inc = parseIncoming(text);
+        item.key = item.inc.patchId ? 'patch:' + item.inc.patchId : fileKey;
+        seen[f.id].key = item.key;
+        if (applied[item.key] || skipped[item.key]) continue;
+        item.plan = planMerge(item.inc);
+      } catch (e) { if (e.status === 401) throw e; item.error = e.message; }
+      pending.push(item);
+    }
+    for (const id of Object.keys(seen)) if (!files.some(f => f.id === id)) delete seen[id];
+    dset({ seen, lastCheck: nowIso() });
+    drive.pending = pending; drive.lastCheck = Date.now();
+    return pending;
+  }
+  async function applyInboxItem(item) {
+    item.plan = planMerge(item.inc);    // re-plan: the phone may have changed since the check
+    await applyMerge(item.plan);
+    remember('applied', item.key);
+    drive.pending = drive.pending.filter(x => x !== item);
+  }
+
+  // Creates or overwrites a JSON file in a folder; returns its id.
+  async function saveDriveFile(folderId, name, text, id) {
+    if (id) {
+      try {
+        const r = await api(`${DRIVE_UPLOAD}/files/${id}?uploadType=media&fields=id`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: text });
+        return (await r.json()).id;
+      } catch (e) { if (e.status !== 403 && e.status !== 404) throw e; }   // not ours or gone: write a new one
+    }
+    const b = 'mp-' + uuid();
+    const body = `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: [folderId], mimeType: 'application/json' })}\r\n`
+      + `--${b}\r\nContent-Type: application/json\r\n\r\n${text}\r\n--${b}--`;
+    const r = await api(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id`, { method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${b}` }, body });
+    return (await r.json()).id;
+  }
+  async function writeOutbox() {
+    const d = dget(), text = exportJson();
+    const files = await listFolder(d.outboxId);
+    const byName = n => files.find(f => f.name === n);
+    const latestId = await saveDriveFile(d.outboxId, 'latest.json', text, (byName('latest.json') || {}).id);
+    const snap = `meal-planner-${todayStr()}.json`;
+    await saveDriveFile(d.outboxId, snap, text, (byName(snap) || {}).id);
+    // Keep the newest 14 daily snapshots; older ones go to Drive's bin.
+    const old = files.map(f => f.name).filter(n => SNAPSHOT_RE.test(n) && n !== snap).sort().reverse().slice(KEEP_SNAPSHOTS - 1);
+    for (const n of old) {
+      try { await api(`${DRIVE_API}/files/${byName(n).id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{"trashed":true}' }); }
+      catch (e) { /* not ours to remove */ }
+    }
+    dset({ dirty: false, lastWrite: nowIso(), latestId });
+  }
+
+  // Data changed: write the outbox about a minute later (or sooner if the app goes to the background).
+  function markDirty() {
+    if (!driveReady()) return;
+    if (!dget().dirty) dset({ dirty: true });
+    clearTimeout(outboxTimer);
+    outboxTimer = setTimeout(flushOutbox, OUTBOX_DELAY);
+    renderDriveChip();
+  }
+  async function flushOutbox() {
+    clearTimeout(outboxTimer);
+    if (!dget().dirty || !driveReady() || !signedIn() || !navigator.onLine || drive.busy) return;
+    drive.busy = true; renderDriveChip();
+    try { await writeOutbox(); drive.error = ''; }
+    catch (e) { drive.error = 'Saving to Drive: ' + e.message; outboxTimer = setTimeout(flushOutbox, 5 * OUTBOX_DELAY); }
+    finally { drive.busy = false; renderDriveChip(); }
+  }
+  // Check the inbox and catch up the outbox. Quiet unless something needs attention.
+  async function syncNow(opts = {}) {
+    if (!driveReady() || !signedIn() || !navigator.onLine || drive.busy) return;
+    drive.busy = true; renderDriveChip();
+    try {
+      await checkInbox();
+      drive.error = '';
+    } catch (e) { drive.error = 'Checking inbox: ' + e.message; }
+    finally { drive.busy = false; }
+    await flushOutbox();
+    renderDriveChip();
+    if (opts.openInbox && drive.pending.length) openModal({ type: 'inbox' });
+    else if (opts.report) toast(drive.error || (drive.pending.length ? `${drive.pending.length} file${drive.pending.length > 1 ? 's' : ''} in the inbox` : 'Drive is up to date'));
+    if (ui.view === 'settings' && !ui.modal) render();
+  }
+  // Tapping the chip (or a Settings button): sign in if needed, then sync.
+  function driveTap(opts) {
+    const go = () => syncNow(opts);
+    if (signedIn()) return go();
+    signIn().then(go, e => { drive.error = e.message; renderDriveChip(); if (!/Loading/.test(e.message)) toast(e.message); });
+  }
+
+  function renderDriveChip() {
+    const el = $('#drive-chip');
+    if (!el) return;
+    if (!driveReady()) { el.hidden = true; return; }
+    el.hidden = false;
+    const d = dget(), n = drive.pending.length;
+    let text, cls = '';
+    if (drive.busy) text = 'Syncing…';
+    else if (!signedIn()) { text = 'Drive: sign in'; cls = 'warn'; }
+    else if (n) { text = `Inbox ${n}`; cls = 'alert'; }
+    else if (drive.error) { text = 'Drive ⚠'; cls = 'warn'; }
+    else text = d.dirty ? 'Drive •' : 'Drive ✓';
+    el.textContent = text; el.className = 'drive-chip ' + cls;
+    el.title = drive.error || (d.dirty ? 'Changes waiting to save to Drive' : 'Drive up to date');
   }
 
   // ---------- rendering helpers ----------
@@ -498,7 +764,10 @@
       html += `</div>`;
     }
     const empty = SLOTS.every(k => !resolveSlot(plan, i, k));
-    if (empty) html += `<div class="card empty"><p>Nothing planned for ${isToday ? 'today' : 'this day'}.</p>
+    if (empty && !S.recipes.length) html += `<div class="card empty"><p>No recipes yet.</p>
+      <p class="muted">Connect Google Drive in Settings to load your recipes and plans, import a file, or add recipes yourself.</p>
+      <div class="row"><button class="btn" data-action="view" data-view="settings">Settings</button><button class="btn" data-action="view" data-view="recipes">Recipes</button></div></div>`;
+    else if (empty) html += `<div class="card empty"><p>Nothing planned for ${isToday ? 'today' : 'this day'}.</p>
       <button class="btn" data-action="goto-week">Plan the week</button></div>`;
 
     const extras = logs.filter(l => l.extra);
@@ -665,12 +934,30 @@
         <p class="muted">Android can't wake a closed web app at a set time, so the calendar file is the reliable option: open it with Google Calendar once a week.</p></div>
       <div class="card"><h3>Stores</h3>
         ${field('One per line, in the order you shop', `<textarea rows="5" data-setting="stores">${esc(settings.stores.join('\n'))}</textarea>`)}</div>
+      ${driveCard()}
       <div class="card"><h3>Data</h3>
-        <p class="muted">Everything lives on this phone. Export monthly for the Brad's Fitness project, and before changing phones.</p>
+        <p class="muted">Everything lives on this phone. Export now and then as a backup, and before changing phones.</p>
         <button class="btn primary wide" data-action="export">Export (JSON + CSV)</button>
         ${canShare() ? `<button class="btn wide" data-action="share">Share export to Drive…</button>` : ''}
         <label class="btn wide">Import from JSON<input type="file" accept="application/json,.json" data-change="import" hidden></label>
         <p class="muted">Meal Planner ${APP_VERSION} · schema ${SCHEMA_VERSION} · ${S.recipes.length} recipes · ${S.mealLogs.length} meals logged</p></div>`;
+  }
+
+  function driveCard() {
+    if (!CLIENT_ID) return `<div class="card"><h3>Google Drive</h3><p class="muted">Drive sync isn't set up in this copy of the app.</p></div>`;
+    const d = dget(), ready = driveReady(), when = iso => (iso ? `${fmtDate(ymd(new Date(iso)))} ${new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}` : 'never');
+    const until = signedIn() ? new Date(drive.expires).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : '';
+    return `<div class="card"><h3>Google Drive</h3>
+      <p class="muted">Claude puts changes in the inbox folder; the app keeps <b>latest.json</b> in the outbox up to date. Only this phone and your Google account can see either.</p>
+      <div class="row">${field('Inbox folder ID', `<input type="text" autocomplete="off" spellcheck="false" data-drive="inboxId" value="${esc(d.inboxId || '')}">`)}</div>
+      <div class="row">${field('Outbox folder ID', `<input type="text" autocomplete="off" spellcheck="false" data-drive="outboxId" value="${esc(d.outboxId || '')}">`)}</div>
+      ${ready ? `<p class="muted">${signedIn() ? `Signed in until ${until}.` : 'Not signed in.'} Inbox checked ${when(d.lastCheck)} · outbox saved ${when(d.lastWrite)}${d.dirty ? ' · <b>changes waiting</b>' : ''}</p>
+        ${drive.error ? `<p class="warn-text">${esc(drive.error)}</p>` : ''}
+        <div class="row wrap"><button class="btn primary" data-action="drive-test">${signedIn() ? 'Test connection' : 'Sign in and test'}</button>
+          <button class="btn" data-action="drive-sync">Check inbox</button>
+          ${signedIn() ? `<button class="btn" data-action="drive-write">Save outbox now</button><button class="btn ghost" data-action="drive-signout">Sign out</button>` : ''}</div>`
+        : '<p class="muted">Paste both folder IDs (the last part of each folder\'s Drive address) to connect.</p>'}
+    </div>`;
   }
 
   // ---------- modals ----------
@@ -818,6 +1105,18 @@
         ${list.length ? list.map(t => `<div class="row" style="align-items:center"><button class="btn" style="flex:3" data-action="apply-template" data-id="${t.id}">${esc(t.templateName)}</button>
           <button class="btn ghost danger" data-action="delete-template" data-id="${t.id}">Delete</button></div>`).join('') : '<p>No templates yet. Plan a week, then Save as template.</p>'}
         <div class="row">${cancelBtn()}</div>`;
+    },
+    inbox() {
+      const items = drive.pending;
+      if (!items.length) return `<h2>Inbox</h2><p>Nothing new from Claude.</p><div class="row">${cancelBtn('Close')}</div>`;
+      return `<h2>Inbox</h2><p class="muted">Changes from Claude. Applying never overwrites anything changed more recently on this phone.</p>
+        ${items.map((it, i) => `<div class="card">
+          <div class="sub">${esc(it.file.name)}${it.inc && it.inc.author ? ` · from ${esc(it.inc.author)}` : ''}</div>
+          ${it.error ? `<p class="warn-text">Can't use this file: ${esc(it.error)}</p>`
+            : `${it.inc.note ? `<p><b>${esc(it.inc.note)}</b></p>` : `<p><b>${it.inc.kind === 'patch' ? 'Patch' : 'Full export'}</b></p>`}<p class="muted">${esc(it.plan.summary)}</p>`}
+          <div class="row">${it.error ? '' : `<button class="btn primary" data-action="inbox-apply" data-i="${i}">${it.plan.changes ? 'Apply' : 'Mark as done'}</button>`}
+            <button class="btn" data-action="inbox-skip" data-i="${i}">Skip</button></div></div>`).join('')}
+        <div class="row">${cancelBtn('Close')}</div>`;
     },
     saveTemplate(m) {
       return `<h2>Save week as template</h2>
@@ -1122,6 +1421,47 @@
       try { await navigator.share({ files: shareFiles(), title: `Meal Planner export ${ui.today}` }); }
       catch (e) { if (e.name !== 'AbortError') toast('Share failed: ' + e.message); }
     },
+
+    // Google Drive
+    drive() {
+      if (drive.pending.length && signedIn()) return openModal({ type: 'inbox' });
+      driveTap({ openInbox: true, report: true });
+    },
+    'drive-sync'() { driveTap({ openInbox: true, report: true }); },
+    'drive-test'() {
+      const test = async () => {
+        const d = dget();
+        try {
+          const inbox = await listFolder(d.inboxId);
+          await listFolder(d.outboxId);
+          dset({ dirty: true }); await flushOutbox();
+          if (drive.error) throw new Error(drive.error);
+          toast(`Connected: ${inbox.length} file${inbox.length === 1 ? '' : 's'} in the inbox, latest.json saved to the outbox`);
+          await syncNow({ openInbox: true });
+        } catch (e) { drive.error = e.message; toast('Test failed: ' + e.message); }
+        render();
+      };
+      if (signedIn()) return test();
+      signIn().then(test, e => { if (!/Loading/.test(e.message)) toast(e.message); render(); });
+    },
+    'drive-write'() { dset({ dirty: true }); flushOutbox().then(() => { toast(drive.error || 'Saved to Drive'); render(); }); },
+    'drive-signout'() { signOut(); toast('Signed out of Google'); render(); renderDriveChip(); },
+    async 'inbox-apply'(el) {
+      const item = drive.pending[Number(el.dataset.i)];
+      if (!item || item.error) return;
+      try { await applyInboxItem(item); toast(`Applied: ${item.plan.summary}`); }
+      catch (e) { toast('Apply failed: ' + e.message); }
+      renderDriveChip();
+      if (drive.pending.length) renderModal(); else closeModal();
+    },
+    'inbox-skip'(el) {
+      const item = drive.pending[Number(el.dataset.i)];
+      if (!item) return;
+      remember('skipped', item.key);
+      drive.pending = drive.pending.filter(x => x !== item);
+      renderDriveChip();
+      if (drive.pending.length) renderModal(); else closeModal();
+    },
   };
 
   // ---------- toast ----------
@@ -1160,6 +1500,14 @@
   document.addEventListener('change', e => {
     const el = e.target;
     if (el.dataset.change === 'import' && el.files[0]) { importFile(el.files[0]); el.value = ''; return; }
+    if (el.dataset.drive) {
+      const v = el.value.trim().replace(/^.*\/folders\//, '').replace(/[?#].*$/, '');   // accept a pasted folder link too
+      if (v && !FOLDER_RE.test(v)) { toast("That doesn't look like a Drive folder ID"); return; }
+      dset({ [el.dataset.drive]: v }); drive.pending = [];
+      if (driveReady()) loadGis().catch(() => {});
+      render(); renderDriveChip();
+      return;
+    }
     if (el.dataset.setting) {
       const k = el.dataset.setting;
       let v = el.value.trim();
@@ -1172,17 +1520,21 @@
     onField(e);
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) return;
+    if (document.hidden) { flushOutbox(); return; }
     const t = todayStr();
     if (t !== ui.today) { if (ui.date === ui.today) ui.date = t; ui.today = t; if (!ui.modal) render(); }
     checkReminders();
+    if (Date.now() - drive.lastCheck > 5 * 60000) syncNow();
+    renderDriveChip();
   });
+  window.addEventListener('online', () => syncNow());
+  window.addEventListener('pagehide', () => flushOutbox());
 
   // ---------- start ----------
   (async () => {
     try {
       db = await openDb();
-      if (!(await getAll('settings')).length) await seed();
+      if (!(await getAll('settings')).length) await firstRun();
       await loadAll();
     } catch (e) {
       $('#app').innerHTML = `<div class="card"><h2>Can't open storage</h2><p class="muted">${esc(e.message)}</p></div>`;
@@ -1190,8 +1542,12 @@
     }
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     render();
+    renderDriveChip();
+    // Google's sign-in script is only fetched once Drive has been set up on this device.
+    if (driveReady() && navigator.onLine) loadGis().catch(() => {});
     checkReminders();
     setInterval(checkReminders, 30000);
+    setInterval(renderDriveChip, 60000);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   })();
 })();

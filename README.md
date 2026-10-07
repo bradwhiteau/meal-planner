@@ -3,27 +3,39 @@
 An offline-first phone app (PWA) for planning the week's meals, turning the plan into a shopping list, tracking the pantry and logging what was eaten, with a running protein total.
 Built to sit next to Lift Log: same stack (plain HTML/CSS/JS, no build step), same hosting (GitHub Pages), same look.
 
-Everything is stored on the phone (IndexedDB). There is no server and no account; after the first load it works with no signal.
-**Export regularly**, because the data only exists on the phone until you do.
+Everything is stored on the phone (IndexedDB). The public site serves only code: anyone else who opens it gets an empty app.
+Optional Google Drive sync gives Claude a mailbox to send changes in and read data out (see [DATA.md](DATA.md)).
 
 ## One-time setup
 
 ### 1. Host the app on GitHub Pages
 
-1. In GitHub Desktop: **File → Add local repository**, pick this `meal-planner` folder, and create a repository when prompted. Then **Publish repository** (untick "Keep this code private"; free GitHub Pages needs a public repository. No personal data is in the code; it all stays on the phone).
-2. On github.com, open the repository and go to **Settings → Pages**. Set Source to **Deploy from a branch**, Branch to **main / (root)**, then **Save**.
-3. After a minute the app is live at `https://<your-username>.github.io/meal-planner/`.
+Done: the app is at `https://bradwhiteau.github.io/meal-planner/`. Pushing to `main` updates it within a minute.
 
-### 2. Install it on the phone
+### 2. Google Drive sync (optional)
+
+This needs a Google OAuth **client ID** (public by design, not a secret) in `config.js`.
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and create a project, e.g. **Meal Planner**.
+2. **APIs & Services → Library**: search for **Google Drive API** and click **Enable**.
+3. **Google Auth Platform → Branding** (or **OAuth consent screen**): app name **Meal Planner**, your email as support and developer contact. Audience: **External**.
+4. **Audience**: leave **Publishing status: Testing**, and under **Test users** add your own Google account. Nobody else can sign in.
+5. **Data access**: add the scopes `.../auth/drive.readonly` and `.../auth/drive.file`.
+6. **Clients → Create client**: type **Web application**, name **Meal Planner**. Under **Authorised JavaScript origins** add `https://bradwhiteau.github.io` (no path, no trailing slash). No redirect URIs. Click **Create**, then copy the **Client ID** (ends in `.apps.googleusercontent.com`). There's no client secret to keep for a web app; ignore it if shown.
+7. Put the client ID in `config.js`, bump `CACHE` in `sw.js`, commit and push.
+
+Then on the phone: **⋮ → Settings → Google Drive**, paste the **inbox** and **outbox** folder IDs (or the folders' Drive links), and tap **Sign in and test**.
+Google will warn that the app isn't verified (it's your own, in Testing mode): tap **Continue**, and tick both Drive boxes.
+
+### 3. Install it on the phone
 
 1. Open the GitHub Pages URL in **Chrome** on Android.
 2. **⋮ menu → Add to Home screen** (or **Install app**).
-3. Bodyweight starts at 97 kg, giving a 194 g daily protein target (2 g × kg). Change it under **⋮ → Settings** as it moves.
-4. Optional: **Turn on notifications** in Settings.
+3. Set your bodyweight under **⋮ → Settings** (the protein target is 2 g × kg by default).
 
 ## Using it
 
-- **Sunday (Week tab):** **Use template** (the seeded "Standard week") or **Copy last week**, tap any slot to change it, then **Generate list**.
+- **Sunday (Week tab):** **Use template** or **Copy last week**, tap any slot to change it, then **Generate list**.
   - A slot holds a **recipe** (servings eaten, plus servings to cook; the list buys for the servings cooked), **leftovers** of an earlier slot that week, or **free text** with an optional protein estimate.
   - Tap a day's training tag (Weights / Treadmill / HIIT / Rest) to change it. New weeks start from Lift Log's schedule.
   - **Save as template** keeps a week you like for later.
@@ -36,6 +48,22 @@ Everything is stored on the phone (IndexedDB). There is no server and no account
 - **Recipes tab:** search, filter by tag, add or edit. Typing a new ingredient name creates it; set its store and aisle under **Ingredients**.
   Recipes flagged "contains lactose" show a red ⚠ badge everywhere.
 
+### Drive sync
+
+The chip next to the menu shows the state:
+
+| Chip | Meaning |
+|---|---|
+| **Drive: sign in** | Tap to sign in to Google (one tap; a Google window flashes up). Needed after the app has been closed for a while, because the sign-in is kept in memory only. |
+| **Inbox 2** | Files from Claude are waiting. Tap to review: each shows Claude's note and a summary, with **Apply** or **Skip**. |
+| **Drive •** | Changes are waiting to be saved to the outbox (about a minute after any change, or when you leave the app). |
+| **Drive ✓** | Up to date. |
+| **Drive ⚠** | Something failed; Settings shows the error. |
+
+Applying a file never overwrites anything changed more recently on the phone, and the same file is never applied twice.
+Logging works offline as usual; the outbox catches up the next time the app is open, online and signed in.
+**Sign out** in Settings revokes the app's access.
+
 ### Reminders
 
 | Reminder | When |
@@ -47,23 +75,22 @@ Everything is stored on the phone (IndexedDB). There is no server and no account
 Times are set in Settings. Android can't wake a closed web app at a set time, so notifications only fire while the app is open or in the background.
 The reminders always show on the **Today** screen. For alerts you can rely on, tap **Settings → Add the next 7 days to my calendar** each Sunday and open the file with Google Calendar.
 
-## Exporting for the Brad's Fitness project
+## Exporting
 
-**⋮ → Export data** downloads three files:
+With Drive sync on, `latest.json` in the outbox is always the current full export. **⋮ → Export data** still downloads three files by hand:
 
 | File | Contents |
 |---|---|
-| `meal-planner-YYYY-MM-DD.json` | Every store (recipes, ingredients, week plans and templates, shopping lists, pantry, meal log, settings), with `schemaVersion` and a description of the fields |
+| `meal-planner-YYYY-MM-DD.json` | Every store, with `schemaVersion` (same format as the outbox; see [DATA.md](DATA.md)) |
 | `meal-planner-YYYY-MM-DD-meal-log.csv` | One row per meal eaten: date, slot, training tag, planned vs swapped vs extra, recipe or text, servings, protein (g), lactose flag |
 | `meal-planner-YYYY-MM-DD-shopping.csv` | One row per shopping item: week, store, aisle, qty, ticked, price (AUD), local, plan or manual |
 
-**Settings → Share export to Drive…** sends the same files to Google Drive (or anywhere) via Android's share sheet.
 The `training` column uses Lift Log's session types (`lift`, `walk`, `hiit`, `rest`), so it joins Lift Log's export on `date`.
 
-**Import** (⋮ → Import data) restores from a JSON export. Records are merged by id, and whichever copy was changed most recently wins. Use it to move to a new phone.
+**Import** (⋮ → Import data) accepts a full export or a patch file, under the same merge rule as the inbox. Use it to move to a new phone.
 
 ## Changing things
 
-- **Seed data** (recipes, ingredients, the starting template) is in `seed.js`. It's only loaded on a fresh install; after that, edit recipes in the app.
-- **App changes:** edit the files, bump `CACHE` in `sw.js` (e.g. `meal-planner-v2`), commit and push in GitHub Desktop. The phone picks up the new version the second time the app is opened.
-- **Testing on the PC:** run `python -m http.server 8766` in this folder and open `http://localhost:8766`.
+- **App changes:** edit the files, bump `CACHE` in `sw.js` (e.g. `meal-planner-v3`), commit and push. The phone picks up the new version the second time the app is opened.
+- **Data never goes in this repo.** It syncs to Drive, so `.gitignore` excludes `*.json` and `meal-planner-data/`. The data folders sit next to this one, not inside it.
+- **Testing on the PC:** run `python -m http.server 8766` in this folder and open `http://localhost:8766`. Drive sign-in only works from the GitHub Pages address.
