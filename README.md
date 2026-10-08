@@ -16,13 +16,13 @@ Done: the app is at `https://bradwhiteau.github.io/meal-planner/`. Pushing to `m
 
 This needs a Google OAuth **client ID** (public by design, not a secret) in `config.js`.
 
-1. Open [Google Cloud Console](https://console.cloud.google.com/) and create a project, e.g. **Meal Planner**.
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and create a project, e.g. **Meal Planner**. Check the project picker (top left) shows it for the steps below.
 2. **APIs & Services → Library**: search for **Google Drive API** and click **Enable**.
-3. **Google Auth Platform → Branding** (or **OAuth consent screen**): app name **Meal Planner**, your email as support and developer contact. Audience: **External**.
-4. **Audience**: leave **Publishing status: Testing**, and under **Test users** add your own Google account. Nobody else can sign in.
-5. **Data access**: add the scopes `.../auth/drive.readonly` and `.../auth/drive.file`.
-6. **Clients → Create client**: type **Web application**, name **Meal Planner**. Under **Authorised JavaScript origins** add `https://bradwhiteau.github.io` (no path, no trailing slash). No redirect URIs. Click **Create**, then copy the **Client ID** (ends in `.apps.googleusercontent.com`). There's no client secret to keep for a web app; ignore it if shown.
-7. Put the client ID in `config.js`, bump `CACHE` in `sw.js`, commit and push.
+3. Search the console for **Google Auth Platform** (or **☰ → APIs & Services → OAuth consent screen**) and click **Get started**: app name **Meal Planner**, your email for support and contact, Audience **External**, then **Create**.
+4. **Audience**: leave **Publishing status: Testing**, and under **Test users → Add users** add your own Google account. Nobody else can sign in.
+5. **Data access → Add or remove scopes**: tick `.../auth/drive.readonly` and `.../auth/drive.file`.
+6. **Clients → Create client**: type **Web application**. Under **Authorized JavaScript origins → Add URI** enter `https://bradwhiteau.github.io` (no path, no trailing slash). Leave redirect URIs empty. **Create**, then copy the **Client ID** (ends in `.apps.googleusercontent.com`).
+7. Put the client ID in `config.js`, bump `CACHE` in `sw.js`, commit and push. (Done: the client ID is in `config.js`.)
 
 Then on the phone: **⋮ → Settings → Google Drive**, paste the **inbox** and **outbox** folder IDs (or the folders' Drive links), and tap **Sign in and test**.
 Google will warn that the app isn't verified (it's your own, in Testing mode): tap **Continue**, and tick both Drive boxes.
