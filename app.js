@@ -709,6 +709,8 @@
   const recipeOptions = sel => sortByName(S.recipes).map(r => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>${esc(r.name)}${r.lactose === 'contains' ? ' ⚠' : ''}</option>`).join('');
   const ingDatalist = () => `<datalist id="ing-names">${sortByName(S.ingredients).map(i => `<option value="${esc(i.name)}">`).join('')}</datalist>`;
   const storeSelect = (m, cur) => `<select data-m="${m}">${[...new Set([...settings.stores, cur].filter(Boolean))].map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
+  // A bare number (or number + letter) reads as "Aisle 13"; named aisles show as they are.
+  const aisleLabel = a => (/^\d+[a-z]?$/i.test(String(a || '').trim()) ? `Aisle ${String(a).trim()}` : a);
   const aisleList = () => `<datalist id="aisles">${[...new Set(S.ingredients.map(i => i.aisle).filter(Boolean))].sort().map(a => `<option value="${esc(a)}">`).join('')}</datalist>`;
 
   function render() {
@@ -850,11 +852,11 @@
       if (!inStore.length) continue;
       const shown = inStore.filter(i => !(ui.hideTicked && i.checked));
       html += `<div class="store-head"><h2>${esc(store)}</h2><span class="muted">${inStore.filter(i => !i.checked).length} left</span></div>`;
-      const aisles = [...new Set(shown.map(i => itemInfo(i).aisle))].sort((a, b) => (a || '~').localeCompare(b || '~'));
+      const aisles = [...new Set(shown.map(i => itemInfo(i).aisle))].sort((a, b) => (a || '~').localeCompare(b || '~', undefined, { numeric: true }));
       for (const a of aisles) {
         const rows = shown.filter(i => itemInfo(i).aisle === a)
           .sort((x, y) => (x.checked - y.checked) || itemInfo(x).name.localeCompare(itemInfo(y).name));
-        html += `<div class="aisle">${esc(a || 'Other')}</div>` + rows.map(it => {
+        html += `<div class="aisle">${esc(a ? aisleLabel(a) : 'Other')}</div>` + rows.map(it => {
           const x = itemInfo(it);
           return `<div class="shop-row"><button class="shop-item ${it.checked ? 'checked' : ''}" data-action="tick" data-id="${it.id}">
             <span class="tick">${it.checked ? '✓' : ''}</span>
@@ -910,7 +912,7 @@
       if (!list.length) continue;
       html += `<div class="store-head"><h2>${esc(store)}</h2></div>` + list.map(i => `<button class="list-row" data-action="edit-ingredient" data-id="${i.id}">
         <span class="grow"><span class="name">${esc(i.name)}</span> ${i.isLocal ? '<span class="badge local">local</span>' : ''}
-        <div class="sub">${esc(i.aisle || 'no aisle')} · ${esc(i.defaultUnit || '')}${i.lastPrice != null ? ' · ' + money(i.lastPrice) : ''}</div></span><span class="muted">›</span></button>`).join('');
+        <div class="sub">${esc(i.aisle ? aisleLabel(i.aisle) : 'no aisle')} · ${esc(i.defaultUnit || '')}${i.lastPrice != null ? ' · ' + money(i.lastPrice) : ''}</div></span><span class="muted">›</span></button>`).join('');
     }
     return html;
   }
@@ -963,12 +965,16 @@
   // ---------- modals ----------
   function renderModal() {
     const root = $('#modal'), m = ui.modal;
+    // Drop focus first: Chrome leaves a field's suggestion popup on screen if the field disappears under it.
+    if (root.contains(document.activeElement)) document.activeElement.blur();
     if (!m) { root.innerHTML = ''; root.hidden = true; return; }
     const scroll = root.firstChild ? root.firstChild.scrollTop : 0;
     root.hidden = false;
     const inner = (MODALS[m.type] || (() => ''))(m);
     root.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">${inner}</div>`;
     root.firstChild.scrollTop = scroll;
+    // Chrome's typed-history suggestions get in the way of price and quantity fields.
+    root.querySelectorAll('input:not([type=checkbox]):not([type=file])').forEach(i => { i.autocomplete = 'off'; });
   }
   function openModal(m) { ui.modal = m; renderModal(); }
   function closeModal() { ui.modal = null; render(); }
