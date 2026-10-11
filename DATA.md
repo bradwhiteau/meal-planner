@@ -17,6 +17,7 @@ The two folder IDs are in `meal-planner-data/README.md` in Drive, not in this re
   (and when the app goes to the background). It's only as fresh as the last time the app was open and signed in to Google:
   check `exportedAt`.
 - `outbox/meal-planner-YYYY-MM-DD.json` holds one snapshot per day; the last 14 days are kept.
+- Only the phone (the app's "Main phone" device) writes the outbox. View-only devices (kitchen tablet, PC) just read latest.json.
 
 A full export looks like this:
 

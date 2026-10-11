@@ -64,6 +64,16 @@ Applying a file never overwrites anything changed more recently on the phone, an
 Logging works offline as usual; the outbox catches up the next time the app is open, online and signed in.
 **Sign out** in Settings revokes the app's access.
 
+### Other devices (kitchen tablet, PC)
+
+Install the app on another device the same way (Chrome or Edge: **Add to Home screen** or the install icon), then **⋮ → Settings → Google Drive**:
+set **This device** to **View-only**, paste the **outbox** folder ID, and tap **Sign in and refresh**.
+
+A view-only device shows the phone's Today, Week, shopping list, pantry and recipes, with a **Recipe** button for ingredients and method.
+It replaces its own copy with `latest.json` on open, when you come back to it, every 5 minutes while showing, and when you tap the chip
+(**View · 8:10 am** is when the phone last saved). It never writes to Drive and never reads the inbox, and editing is hidden.
+Changes are made on the phone only. Only one device, the phone, should be the **Main phone**: a second main device would overwrite `latest.json`.
+
 ### Reminders
 
 | Reminder | When |

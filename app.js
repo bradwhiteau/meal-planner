@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.0';
+  const APP_VERSION = '1.2.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -186,7 +186,7 @@
       const subs = [];
       if (n !== 1) subs.push(`${n} servings`);
       if (cook > n) subs.push(`cook ${cook}`);
-      return { kind: 'recipe', recipe: r, servings: n, label: r.name, sub: subs.join(' · '),
+      return { kind: 'recipe', recipe: r, servings: n, label: r.name, sub: subs.join(' · '), cook,
         protein: r.proteinPerServingG != null ? r.proteinPerServingG * n : null };
     }
     return { kind: 'text', label: s.text || '', servings: 1, protein: s.proteinG != null ? s.proteinG : null, sub: '' };
@@ -456,6 +456,7 @@
     return {
       kind: d.kind === 'patch' ? 'patch' : 'export', patchId: d.patchId || null,
       note: isStr(d.note) ? d.note.slice(0, 500) : '', author: isStr(d.author) ? d.author.slice(0, 50) : '', ups, dels,
+      exportedAt: isStr(d.exportedAt) ? d.exportedAt : '',
     };
   }
   // Merge rule: a record is taken when it's new, or when its updatedAt is later than the copy here.
@@ -520,7 +521,12 @@
   function dget() { try { return JSON.parse(localStorage.getItem('mp.drive') || '{}'); } catch (e) { return {}; } }
   function dset(patch) { const v = { ...dget(), ...patch }; try { localStorage.setItem('mp.drive', JSON.stringify(v)); } catch (e) { /* ignore */ } return v; }
   function remember(list, key) { const d = dget(); dset({ [list]: { ...(d[list] || {}), [key]: nowIso() } }); }
-  const driveReady = () => { const d = dget(); return !!(CLIENT_ID && FOLDER_RE.test(d.inboxId || '') && FOLDER_RE.test(d.outboxId || '')); };
+  // A view-only device (kitchen tablet, PC) mirrors the phone's latest.json and never writes to Drive.
+  const isViewer = () => !!dget().viewer;
+  const driveReady = () => {
+    const d = dget();
+    return !!(CLIENT_ID && FOLDER_RE.test(d.outboxId || '') && (d.viewer || FOLDER_RE.test(d.inboxId || '')));
+  };
   const signedIn = () => !!drive.token && Date.now() < drive.expires - 60000;
 
   // Google's sign-in library loads only once Drive is set up, so a fresh visitor makes no Google calls.
@@ -629,6 +635,7 @@
     return (await r.json()).id;
   }
   async function writeOutbox() {
+    if (isViewer()) throw new Error('View-only devices never write to Drive');
     const d = dget(), text = exportJson();
     const files = await listFolder(d.outboxId);
     const byName = n => files.find(f => f.name === n);
@@ -644,9 +651,38 @@
     dset({ dirty: false, lastWrite: nowIso(), latestId });
   }
 
+  // View-only: replace everything on this device with the phone's latest.json (skipped if it hasn't changed).
+  function replaceStore(store, recs) {
+    return new Promise((res, rej) => {
+      const tx = db.transaction(store, 'readwrite'), os = tx.objectStore(store);
+      os.clear(); recs.forEach(r => os.put(r));
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    });
+  }
+  async function refreshFromOutbox(force) {
+    const d = dget();
+    const f = (await listFolder(d.outboxId)).find(x => x.name === 'latest.json');
+    if (!f) throw new Error('No latest.json in the outbox yet: open the app on your phone first');
+    drive.lastCheck = Date.now(); dset({ lastCheck: nowIso() });
+    if (!force && f.modifiedTime === d.viewMod) return false;
+    if (Number(f.size) > MAX_FILE_BYTES) throw new Error('latest.json is too large');
+    const inc = parseIncoming(await (await api(`${DRIVE_API}/files/${f.id}?alt=media`)).text());
+    if (inc.kind !== 'export') throw new Error("latest.json isn't a full export");
+    for (const store of STORES) {
+      if (store === 'settings' && !(inc.ups.settings || []).length) continue;   // keep this device's if none sent
+      const recs = inc.ups[store] || [];
+      await replaceStore(store, recs);
+      S[store] = recs;
+    }
+    settings = S.settings.find(x => x.id === 'settings');
+    settings.reminderTimes = { ...DEFAULT_SETTINGS.reminderTimes, ...(settings.reminderTimes || {}) };
+    dset({ viewMod: f.modifiedTime, viewExportedAt: inc.exportedAt || f.modifiedTime });
+    return true;
+  }
+
   // Data changed: write the outbox about a minute later (or sooner if the app goes to the background).
   function markDirty() {
-    if (!driveReady()) return;
+    if (!driveReady() || isViewer()) return;
     if (!dget().dirty) dset({ dirty: true });
     clearTimeout(outboxTimer);
     outboxTimer = setTimeout(flushOutbox, OUTBOX_DELAY);
@@ -654,7 +690,7 @@
   }
   async function flushOutbox() {
     clearTimeout(outboxTimer);
-    if (!dget().dirty || !driveReady() || !signedIn() || !navigator.onLine || drive.busy) return;
+    if (isViewer() || !dget().dirty || !driveReady() || !signedIn() || !navigator.onLine || drive.busy) return;
     drive.busy = true; renderDriveChip();
     try { await writeOutbox(); drive.error = ''; }
     catch (e) { drive.error = 'Saving to Drive: ' + e.message; outboxTimer = setTimeout(flushOutbox, 5 * OUTBOX_DELAY); }
@@ -663,6 +699,17 @@
   // Check the inbox and catch up the outbox. Quiet unless something needs attention.
   async function syncNow(opts = {}) {
     if (!driveReady() || !signedIn() || !navigator.onLine || drive.busy) return;
+    if (isViewer()) {
+      drive.busy = true; renderDriveChip();
+      let changed = false;
+      try { changed = await refreshFromOutbox(opts.force); drive.error = ''; }
+      catch (e) { drive.error = 'Loading from Drive: ' + e.message; }
+      finally { drive.busy = false; }
+      renderDriveChip();
+      if (opts.report) toast(drive.error || (changed ? "Updated with the phone's latest data" : 'Already up to date'));
+      if (changed || ui.view === 'settings') { if (!ui.modal) render(); }
+      return;
+    }
     drive.busy = true; renderDriveChip();
     try {
       await checkInbox();
@@ -689,6 +736,18 @@
     el.hidden = false;
     const d = dget(), n = drive.pending.length;
     let text, cls = '';
+    if (isViewer()) {
+      const at = d.viewExportedAt ? new Date(d.viewExportedAt) : null;
+      const stamp = !at ? 'not loaded' : ymd(at) === todayStr()
+        ? at.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : fmtDate(ymd(at));
+      if (drive.busy) text = 'Updating…';
+      else if (!signedIn()) { text = 'Drive: sign in'; cls = 'warn'; }
+      else if (drive.error) { text = 'Drive ⚠'; cls = 'warn'; }
+      else text = `View · ${stamp}`;
+      el.textContent = text; el.className = 'drive-chip ' + cls;
+      el.title = drive.error || "View-only: showing the phone's data. Tap to refresh.";
+      return;
+    }
     if (drive.busy) text = 'Syncing…';
     else if (!signedIn()) { text = 'Drive: sign in'; cls = 'warn'; }
     else if (n) { text = `Inbox ${n}`; cls = 'alert'; }
@@ -714,6 +773,7 @@
   const aisleList = () => `<datalist id="aisles">${[...new Set(S.ingredients.map(i => i.aisle).filter(Boolean))].sort().map(a => `<option value="${esc(a)}">`).join('')}</datalist>`;
 
   function render() {
+    document.body.classList.toggle('viewer', isViewer());
     document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === ui.view));
     const main = $('#app');
     const views = { today: renderToday, week: renderWeek, shop: renderShop, pantry: renderPantry, recipes: renderRecipes, ingredients: renderIngredients, settings: renderSettings };
@@ -746,7 +806,7 @@
       <div class="protein-num">${Math.round(got)}<small> ${target ? `/ ${target} g` : 'g'}</small></div>
       ${target ? `<div class="bar"><div class="bar-fill ${got >= target ? 'over' : ''}" style="width:${pct}%"></div></div>`
         : `<p class="muted">Set your bodyweight to see a target. <button class="link" data-action="view" data-view="settings">Settings</button></p>`}
-      <div class="row"><button class="btn primary" data-action="shake">+ Shake</button><button class="btn" data-action="add-food">+ Add food</button></div>
+      <div class="row edit-only"><button class="btn primary" data-action="shake">+ Shake</button><button class="btn" data-action="add-food">+ Add food</button></div>
     </div>`;
 
     for (const k of SLOTS) {
@@ -758,11 +818,13 @@
       if (r) html += `<div class="meal-name">${esc(r.label)} ${lactoseBadge(r.recipe)}</div>${r.sub ? `<div class="sub">${esc(r.sub)}</div>` : ''}`;
       if (slotLogs.length) {
         html += slotLogs.map(l => `<div class="row" style="align-items:center"><span class="done-line" style="flex:1">${l.planned ? '✓ Eaten' : `↺ Had ${esc(logLabel(l))}`} · ${gram(l.proteinG)}</span>
-          <button class="btn small ghost" data-action="undo-log" data-id="${l.id}">Undo</button></div>`).join('');
+          <button class="btn small ghost edit-only" data-action="undo-log" data-id="${l.id}">Undo</button></div>`).join('');
       } else {
-        html += `<div class="row"><button class="btn primary" data-action="eat" data-slot="${k}">Eaten</button>
+        html += `<div class="row edit-only"><button class="btn primary" data-action="eat" data-slot="${k}">Eaten</button>
           <button class="btn" data-action="swap" data-slot="${k}">Swap</button></div>`;
       }
+      if (r && r.recipe) html += `<div class="row"><button class="btn small ghost" data-action="show-recipe" data-id="${r.recipe.id}"
+        ${r.kind === 'recipe' && r.cook ? `data-cook="${r.cook}"` : ''}>Recipe</button></div>`;
       html += `</div>`;
     }
     const empty = SLOTS.every(k => !resolveSlot(plan, i, k));
@@ -776,7 +838,7 @@
     if (extras.length) {
       html += `<div class="card"><span class="slot-label">Also eaten</span>${extras.map(l => `<div class="row" style="align-items:center">
         <span style="flex:1">${esc(logLabel(l))} <span class="muted">· ${gram(l.proteinG)}</span></span>
-        <button class="btn small ghost" data-action="undo-log" data-id="${l.id}">Remove</button></div>`).join('')}</div>`;
+        <button class="btn small ghost edit-only" data-action="undo-log" data-id="${l.id}">Remove</button></div>`).join('')}</div>`;
     }
 
     const prep = remindersFor(date);
@@ -801,7 +863,7 @@
       <div class="day-title"><div class="day-name">Week of ${fmtDate(ui.week)}</div>
         <div class="day-sub">${isCurrent ? 'This week' : `<button class="link" data-action="week" data-d="0">this week</button>`}</div></div>
       <button class="nav" data-action="week" data-d="7" aria-label="Next week">›</button></div>
-      <div class="row wrap">
+      <div class="row wrap edit-only">
         <button class="btn" data-action="copy-last">Copy last week</button>
         <button class="btn" data-action="use-template">Use template</button>
         <button class="btn" data-action="save-template">Save as template</button>
@@ -843,7 +905,7 @@
         ${priced.length ? `<div class="sub">${money(ticked)} in the trolley · ${money(local)} local (${total ? Math.round(local / total * 100) : 0}%)</div>` : ''}
         <button class="btn small ${ui.hideTicked ? 'primary' : ''}" style="margin-top:8px" data-action="hide-ticked">${ui.hideTicked ? 'Show' : 'Hide'} ticked items</button></div>`;
     }
-    html += `<div class="row"><button class="btn" data-action="regenerate">${items.length ? 'Regenerate' : 'Generate from plan'}</button>
+    html += `<div class="row edit-only"><button class="btn" data-action="regenerate">${items.length ? 'Regenerate' : 'Generate from plan'}</button>
       <button class="btn" data-action="add-item">+ Add item</button></div>`;
     if (!items.length) return html + `<div class="card empty"><p>No list for this week yet.</p><p class="muted">Plan the week, then tap Generate.</p></div>`;
 
@@ -863,7 +925,7 @@
             <span class="si-main"><span class="si-name">${esc(x.name)}</span>
               <span class="si-qty">${esc(fmtQty(it.qty, it.unit))}${x.isLocal ? ' · <span class="badge local">local</span>' : ''}${it.carried ? ' · from last week' : ''}</span></span>
             ${it.price != null && it.price !== '' ? `<span class="si-price">${money(it.price)}</span>` : ''}</button>
-            <button class="si-more" data-action="edit-item" data-id="${it.id}" aria-label="Edit ${esc(x.name)}">$</button></div>`;
+            <button class="si-more edit-only" data-action="edit-item" data-id="${it.id}" aria-label="Edit ${esc(x.name)}">$</button></div>`;
         }).join('');
       }
     }
@@ -874,16 +936,16 @@
   function renderPantry() {
     const rows = [...S.pantryItems].sort((a, b) => ingName(a.ingredientId).localeCompare(ingName(b.ingredientId)));
     let html = `<h1>Pantry</h1>
-      <div class="row"><button class="btn" data-action="baked">🍞 Baked sourdough</button><button class="btn" data-action="eggs">🥚 Collected eggs</button></div>
+      <div class="row edit-only"><button class="btn" data-action="baked">🍞 Baked sourdough</button><button class="btn" data-action="eggs">🥚 Collected eggs</button></div>
       <p class="muted">What's on hand is taken off the shopping list.</p>`;
     html += rows.map(p => {
       const step = norm(1, p.unit).measured ? (p.unit === 'kg' || p.unit.toLowerCase() === 'l' ? 0.5 : 100) : 1;
       return `<div class="pantry-row"><span class="grow">${esc(ingName(p.ingredientId))}</span>
-        <span class="stepper"><button data-action="pantry-step" data-id="${p.id}" data-d="${-step}" aria-label="Less">−</button>
+        <span class="stepper"><button class="edit-only" data-action="pantry-step" data-id="${p.id}" data-d="${-step}" aria-label="Less">−</button>
         <button class="qty" data-action="edit-pantry" data-id="${p.id}">${esc(fmtQty(Number(p.qty) || 0, p.unit))}</button>
-        <button data-action="pantry-step" data-id="${p.id}" data-d="${step}" aria-label="More">+</button></span></div>`;
+        <button class="edit-only" data-action="pantry-step" data-id="${p.id}" data-d="${step}" aria-label="More">+</button></span></div>`;
     }).join('');
-    return html + `<button class="btn wide" data-action="add-pantry">+ Add pantry item</button>`;
+    return html + `<button class="btn wide edit-only" data-action="add-pantry">+ Add pantry item</button>`;
   }
 
   // ---------- Recipes ----------
@@ -901,7 +963,7 @@
     return `<div class="card-head"><h1>Recipes</h1><button class="btn small" data-action="view" data-view="ingredients">Ingredients</button></div>
       <input type="search" id="recipe-q" placeholder="Search recipes or ingredients" value="${esc(ui.recipeQuery)}">
       <div class="chips">${['', ...TAGS, 'lactose-free'].map(t => `<button class="chip ${ui.recipeTag === t ? 'on' : ''}" data-action="recipe-tag" data-tag="${esc(t)}">${t || 'All'}</button>`).join('')}</div>
-      <button class="btn primary wide" data-action="new-recipe">+ New recipe</button>
+      <button class="btn primary wide edit-only" data-action="new-recipe">+ New recipe</button>
       <div id="recipe-list">${recipeList()}</div>`;
   }
   function renderIngredients() {
@@ -923,33 +985,48 @@
     const nsText = { granted: 'On: reminders show while the app is open or in the background.', denied: 'Blocked in Chrome settings. Reminders show on the Today screen instead.',
       default: 'Off. Reminders show on the Today screen.', unsupported: 'Not supported here. Reminders show on the Today screen.' }[ns];
     return `<h1>Settings</h1>
-      <div class="card"><h3>Protein</h3>
+      <div class="card edit-only"><h3>Protein</h3>
         <div class="row">${field('Bodyweight (kg)', `<input type="number" inputmode="decimal" step="0.1" data-setting="bodyweightKg" value="${esc(settings.bodyweightKg == null ? '' : settings.bodyweightKg)}">`)}
           ${field('Target (g per kg)', `<input type="number" inputmode="decimal" step="0.1" data-setting="proteinTargetGPerKg" value="${esc(settings.proteinTargetGPerKg)}">`)}</div>
         <p class="muted">${target ? `Daily target: <b>${target} g</b>` : 'Enter your bodyweight to set a daily target.'}</p></div>
       <div class="card"><h3>Reminders</h3>
-        <div class="row">${field('Night-before tasks', `<input type="time" data-setting="reminderTimes.evening" value="${esc(settings.reminderTimes.evening)}">`)}
+        <div class="row edit-only">${field('Night-before tasks', `<input type="time" data-setting="reminderTimes.evening" value="${esc(settings.reminderTimes.evening)}">`)}
           ${field('Sunday batch cook', `<input type="time" data-setting="reminderTimes.batchCook" value="${esc(settings.reminderTimes.batchCook)}">`)}</div>
         <p class="muted">Notifications: ${nsText}</p>
         ${ns === 'default' ? `<button class="btn wide" data-action="enable-notify">Turn on notifications</button>` : ''}
         <button class="btn wide" data-action="ics">Add the next 7 days to my calendar</button>
         <p class="muted">Android can't wake a closed web app at a set time, so the calendar file is the reliable option: open it with Google Calendar once a week.</p></div>
-      <div class="card"><h3>Stores</h3>
+      <div class="card edit-only"><h3>Stores</h3>
         ${field('One per line, in the order you shop', `<textarea rows="5" data-setting="stores">${esc(settings.stores.join('\n'))}</textarea>`)}</div>
       ${driveCard()}
       <div class="card"><h3>Data</h3>
-        <p class="muted">Everything lives on this phone. Export now and then as a backup, and before changing phones.</p>
+        <p class="muted">${isViewer() ? "This device shows a copy of the phone's data." : 'Everything lives on this phone. Export now and then as a backup, and before changing phones.'}</p>
         <button class="btn primary wide" data-action="export">Export (JSON + CSV)</button>
         ${canShare() ? `<button class="btn wide" data-action="share">Share export to Drive…</button>` : ''}
-        <label class="btn wide">Import from JSON<input type="file" accept="application/json,.json" data-change="import" hidden></label>
+        <label class="btn wide edit-only">Import from JSON<input type="file" accept="application/json,.json" data-change="import" hidden></label>
         <p class="muted">Meal Planner ${APP_VERSION} · schema ${SCHEMA_VERSION} · ${S.recipes.length} recipes · ${S.mealLogs.length} meals logged</p></div>`;
   }
 
   function driveCard() {
     if (!CLIENT_ID) return `<div class="card"><h3>Google Drive</h3><p class="muted">Drive sync isn't set up in this copy of the app.</p></div>`;
-    const d = dget(), ready = driveReady(), when = iso => (iso ? `${fmtDate(ymd(new Date(iso)))} ${new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}` : 'never');
+    const d = dget(), ready = driveReady(), viewer = isViewer();
+    const when = iso => (iso ? `${fmtDate(ymd(new Date(iso)))} ${new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}` : 'never');
     const until = signedIn() ? new Date(drive.expires).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : '';
-    return `<div class="card"><h3>Google Drive</h3>
+    const role = `<div class="field"><span>This device</span><div class="seg">
+        <button class="${viewer ? '' : 'on'}" data-action="drive-role" data-value="main">Main phone</button>
+        <button class="${viewer ? 'on' : ''}" data-action="drive-role" data-value="viewer">View-only</button></div></div>`;
+    if (viewer) {
+      return `<div class="card"><h3>Google Drive</h3>${role}
+        <p class="muted">Shows your phone's meals, plans and shopping list from <b>latest.json</b> in the outbox. Changes are made on the phone; this device never writes to Drive.</p>
+        <div class="row">${field('Outbox folder ID', `<input type="text" autocomplete="off" spellcheck="false" data-drive="outboxId" value="${esc(d.outboxId || '')}">`)}</div>
+        ${ready ? `<p class="muted">${signedIn() ? `Signed in until ${until}.` : 'Not signed in.'} Showing the phone's data from ${when(d.viewExportedAt)} · checked ${when(d.lastCheck)}</p>
+          ${drive.error ? `<p class="warn-text">${esc(drive.error)}</p>` : ''}
+          <div class="row wrap"><button class="btn primary" data-action="drive-sync">${signedIn() ? 'Refresh now' : 'Sign in and refresh'}</button>
+            ${signedIn() ? `<button class="btn ghost" data-action="drive-signout">Sign out</button>` : ''}</div>`
+          : '<p class="muted">Paste the outbox folder ID (or the folder\'s Drive link) to connect.</p>'}
+      </div>`;
+    }
+    return `<div class="card"><h3>Google Drive</h3>${role}
       <p class="muted">Claude puts changes in the inbox folder; the app keeps <b>latest.json</b> in the outbox up to date. Only this phone and your Google account can see either.</p>
       <div class="row">${field('Inbox folder ID', `<input type="text" autocomplete="off" spellcheck="false" data-drive="inboxId" value="${esc(d.inboxId || '')}">`)}</div>
       <div class="row">${field('Outbox folder ID', `<input type="text" autocomplete="off" spellcheck="false" data-drive="outboxId" value="${esc(d.outboxId || '')}">`)}</div>
@@ -985,7 +1062,7 @@
       return `<div class="menu"><h2>Menu</h2>
         <button class="btn wide" data-action="view" data-view="settings">⚙ Settings</button>
         <button class="btn wide" data-action="export">⬇ Export data</button>
-        <label class="btn wide">⬆ Import data<input type="file" accept="application/json,.json" data-change="import" hidden></label>
+        <label class="btn wide edit-only">⬆ Import data<input type="file" accept="application/json,.json" data-change="import" hidden></label>
         <button class="btn wide" data-action="view" data-view="ingredients">Ingredients</button>
         ${cancelBtn('Close')}</div>`;
     },
@@ -1112,6 +1189,18 @@
           <button class="btn ghost danger" data-action="delete-template" data-id="${t.id}">Delete</button></div>`).join('') : '<p>No templates yet. Plan a week, then Save as template.</p>'}
         <div class="row">${cancelBtn()}</div>`;
     },
+    recipeView(m) {
+      const r = byId('recipes', m.id);
+      if (!r) return `<h2>Recipe not found</h2><div class="row">${cancelBtn('Close')}</div>`;
+      const f = (m.cook || r.servings) / (r.servings || 1);
+      return `<h2>${esc(r.name)}</h2>
+        <p>${lactoseBadge(r)} <span class="muted">${r.proteinPerServingG != null ? `${r.proteinPerServingG} g protein per serving · ` : ''}serves ${r.servings}${r.tags.length ? ' · ' + esc(r.tags.join(', ')) : ''}</span></p>
+        ${f !== 1 ? `<p><b>Quantities for ${m.cook} servings</b></p>` : ''}
+        <h3>Ingredients</h3>
+        <ul class="ing-list">${r.ingredients.map(x => { const n = norm((Number(x.qty) || 0) * f, x.unit); return `<li>${esc(fmtQty(round(n.qty, 2), n.unit))} ${esc(ingName(x.ingredientId))}</li>`; }).join('')}</ul>
+        ${r.method ? `<h3>Method</h3><p class="method">${esc(r.method)}</p>` : ''}
+        <div class="row">${cancelBtn('Close')}</div>`;
+    },
     inbox() {
       const items = drive.pending;
       if (!items.length) return `<h2>Inbox</h2><p>Nothing new from Claude.</p><div class="row">${cancelBtn('Close')}</div>`;
@@ -1227,6 +1316,11 @@
     },
     'edit-slot'(el) {
       const day = Number(el.dataset.day), slot = el.dataset.slot, s = viewPlan(ui.week).days[day].slots[slot] || {};
+      if (isViewer()) {
+        const r = resolveSlot(viewPlan(ui.week), day, slot);
+        if (r && r.recipe) openModal({ type: 'recipeView', id: r.recipe.id, cook: r.kind === 'recipe' && r.cook ? r.cook : null });
+        return;
+      }
       openModal({
         type: 'slot', day, slot, mode: s.leftoverOf ? 'leftover' : s.text != null ? 'text' : 'recipe',
         recipeId: s.recipeId || '', servings: s.servings || 1, cook: s.cook || null,
@@ -1361,6 +1455,7 @@
       openModal({ type: 'recipe', id: null, draft: { name: '', servings: 1, proteinPerServingG: null, lactose: 'none', tags: [], method: '', ingredients: [{ name: '', qty: null, unit: '' }] } });
     },
     'edit-recipe'(el) {
+      if (isViewer()) return openModal({ type: 'recipeView', id: el.dataset.id });
       const r = byId('recipes', el.dataset.id);
       const draft = { ...clone(r), ingredients: r.ingredients.map(x => ({ name: ingName(x.ingredientId), qty: x.qty, unit: x.unit })) };
       openModal({ type: 'recipe', id: r.id, draft });
@@ -1428,9 +1523,28 @@
       catch (e) { if (e.name !== 'AbortError') toast('Share failed: ' + e.message); }
     },
 
+    'show-recipe'(el) { openModal({ type: 'recipeView', id: el.dataset.id, cook: Number(el.dataset.cook) || null }); },
+    'drive-role'(el) {
+      const toViewer = el.dataset.value === 'viewer';
+      if (toViewer === isViewer()) return;
+      if (toViewer) {
+        if (!confirm("Make this device view-only?\n\nIt will show your phone's data from Drive, replacing everything stored on this device, and it will never write to Drive.\n\nDon't do this on your main phone.")) return;
+        clearTimeout(outboxTimer);
+        dset({ viewer: true, dirty: false, viewMod: null, viewExportedAt: null });
+        drive.pending = []; drive.error = '';
+        render(); renderDriveChip();
+        if (driveReady()) { loadGis().catch(() => {}); if (signedIn()) syncNow({ force: true, report: true }); }
+      } else {
+        if (!confirm('Make this the main device?\n\nIt will read the inbox and save its data to the outbox, replacing latest.json. Only your phone should be the main device.')) return;
+        dset({ viewer: false, viewMod: null });
+        drive.error = '';
+        render(); renderDriveChip();
+      }
+    },
+
     // Google Drive
     drive() {
-      if (drive.pending.length && signedIn()) return openModal({ type: 'inbox' });
+      if (!isViewer() && drive.pending.length && signedIn()) return openModal({ type: 'inbox' });
       driveTap({ openInbox: true, report: true });
     },
     'drive-sync'() { driveTap({ openInbox: true, report: true }); },
@@ -1478,8 +1592,11 @@
   }
 
   // ---------- events ----------
+  const VIEWER_OK = new Set(['view', 'menu', 'close-modal', 'day', 'goto-week', 'week', 'shop-week', 'hide-ticked', 'recipe-tag',
+    'edit-recipe', 'edit-slot', 'show-recipe', 'drive', 'drive-sync', 'drive-signout', 'drive-role', 'export', 'share', 'ics', 'enable-notify']);
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-action]');
+    if (el && isViewer() && !VIEWER_OK.has(el.dataset.action)) { toast('View-only device: make changes on your phone'); return; }
     if (el && !el.disabled && actions[el.dataset.action]) actions[el.dataset.action](el, e);
     else if (e.target.id === 'modal') closeModal();
   });
@@ -1515,6 +1632,7 @@
       return;
     }
     if (el.dataset.setting) {
+      if (isViewer()) { render(); return; }
       const k = el.dataset.setting;
       let v = el.value.trim();
       if (k === 'stores') v = v.split('\n').map(s => s.trim()).filter(Boolean);
@@ -1554,6 +1672,7 @@
     checkReminders();
     setInterval(checkReminders, 30000);
     setInterval(renderDriveChip, 60000);
+    setInterval(() => { if (isViewer() && !document.hidden) syncNow(); }, 5 * 60000);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   })();
 })();

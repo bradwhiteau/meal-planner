@@ -211,3 +211,6 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 .drive-chip.warn { color: var(--warn); border-color: var(--warn); }
 .drive-chip.alert { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .warn-text { color: var(--warn); }
+
+/* View-only devices (kitchen tablet, PC) hide everything that changes data */
+body.viewer .edit-only { display: none !important; }
