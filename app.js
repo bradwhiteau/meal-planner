@@ -813,7 +813,7 @@
       html += `<div class="card banner"><b>Now</b><ul>${due.map(r => `<li>${esc(r.text)}</li>`).join('')}</ul></div>`;
     }
 
-    html += `<div class="card protein">
+    html += `<div class="grid"><div class="card protein">
       <div class="card-head"><span class="slot-label">Protein</span>${target ? `<span class="muted">target ${target} g</span>` : ''}</div>
       <div class="protein-num">${Math.round(got)}<small> ${target ? `/ ${target} g` : 'g'}</small></div>
       ${target ? `<div class="bar"><div class="bar-fill ${got >= target ? 'over' : ''}" style="width:${pct}%"></div></div>`
@@ -859,6 +859,7 @@
       html += `<div class="card prep"><span class="slot-label">${isToday ? "Today's prep" : 'Prep'}</span>
         <ul class="ing-list">${prep.map(t => `<li><b>${hm(t.at)}</b> ${esc(t.text)}</li>`).join('')}</ul></div>`;
     }
+    html += '</div>';
     return html;
   }
   function logLabel(l) {
@@ -882,6 +883,7 @@
         <button class="btn primary" data-action="generate">Generate list</button>
       </div>`;
     if (planIsEmpty(plan)) html += `<p class="muted center">Empty week. Copy last week or start from a template, then tap any slot to change it.</p>`;
+    html += '<div class="grid">';
     plan.days.forEach((d, i) => {
       const p = plannedProtein(plan, i);
       html += `<div class="card"><div class="card-head"><h3>${fmtDate(d.date)}${d.date === ui.today ? ' <span class="today-dot">today</span>' : ''}</h3>
@@ -896,6 +898,7 @@
       if (p.total || p.unknown) html += `<div class="sub" style="text-align:right">Planned protein ${Math.round(p.total)} g${p.unknown ? ' + some not set' : ''}</div>`;
       html += `</div>`;
     });
+    html += '</div>';
     return html;
   }
 
@@ -921,11 +924,12 @@
       <button class="btn" data-action="add-item">+ Add item</button></div>`;
     if (!items.length) return html + `<div class="card empty"><p>No list for this week yet.</p><p class="muted">Plan the week, then tap Generate.</p></div>`;
 
+    html += '<div class="grid stores">';
     for (const store of storeOrder()) {
       const inStore = items.filter(i => itemInfo(i).store === store || (store === 'Other' && !storeOrder().slice(0, -1).includes(itemInfo(i).store)));
       if (!inStore.length) continue;
       const shown = inStore.filter(i => !(ui.hideTicked && i.checked));
-      html += `<div class="store-head"><h2>${esc(store)}</h2><span class="muted">${inStore.filter(i => !i.checked).length} left</span></div>`;
+      html += `<section><div class="store-head"><h2>${esc(store)}</h2><span class="muted">${inStore.filter(i => !i.checked).length} left</span></div>`;
       const aisles = [...new Set(shown.map(i => itemInfo(i).aisle))].sort((a, b) => (a || '~').localeCompare(b || '~', undefined, { numeric: true }));
       for (const a of aisles) {
         const rows = shown.filter(i => itemInfo(i).aisle === a)
@@ -940,8 +944,9 @@
             <button class="si-more edit-only" data-action="edit-item" data-id="${it.id}" aria-label="Edit ${esc(x.name)}">$</button></div>`;
         }).join('');
       }
+      html += '</section>';
     }
-    return html;
+    return html + '</div>';
   }
 
   // ---------- Pantry ----------
@@ -950,13 +955,13 @@
     let html = `<h1>Pantry</h1>
       <div class="row edit-only"><button class="btn" data-action="baked">🍞 Baked sourdough</button><button class="btn" data-action="eggs">🥚 Collected eggs</button></div>
       <p class="muted">What's on hand is taken off the shopping list.</p>`;
-    html += rows.map(p => {
+    html += '<div class="grid tight">' + rows.map(p => {
       const step = norm(1, p.unit).measured ? (p.unit === 'kg' || p.unit.toLowerCase() === 'l' ? 0.5 : 100) : 1;
       return `<div class="pantry-row"><span class="grow">${esc(ingName(p.ingredientId))}</span>
         <span class="stepper"><button class="edit-only" data-action="pantry-step" data-id="${p.id}" data-d="${-step}" aria-label="Less">−</button>
         <button class="qty" data-action="edit-pantry" data-id="${p.id}">${esc(fmtQty(Number(p.qty) || 0, p.unit))}</button>
         <button class="edit-only" data-action="pantry-step" data-id="${p.id}" data-d="${step}" aria-label="More">+</button></span></div>`;
-    }).join('');
+    }).join('') + '</div>';
     return html + `<button class="btn wide edit-only" data-action="add-pantry">+ Add pantry item</button>`;
   }
 
@@ -976,19 +981,19 @@
       <input type="search" id="recipe-q" placeholder="Search recipes or ingredients" value="${esc(ui.recipeQuery)}">
       <div class="chips">${['', ...TAGS, 'lactose-free'].map(t => `<button class="chip ${ui.recipeTag === t ? 'on' : ''}" data-action="recipe-tag" data-tag="${esc(t)}">${t || 'All'}</button>`).join('')}</div>
       <button class="btn primary wide edit-only" data-action="new-recipe">+ New recipe</button>
-      <div id="recipe-list">${recipeList()}</div>`;
+      <div id="recipe-list" class="grid tight">${recipeList()}</div>`;
   }
   function renderIngredients() {
     let html = `<div class="card-head"><h1>Ingredients</h1><button class="btn small" data-action="view" data-view="recipes">‹ Recipes</button></div>
-      <p class="muted">Store and aisle decide where each item sits on the shopping list.</p>`;
+      <p class="muted">Store and aisle decide where each item sits on the shopping list.</p><div class="grid stores">`;
     for (const store of storeOrder()) {
       const list = sortByName(S.ingredients.filter(i => (i.store || 'Other') === store || (store === 'Other' && !storeOrder().includes(i.store))));
       if (!list.length) continue;
-      html += `<div class="store-head"><h2>${esc(store)}</h2></div>` + list.map(i => `<button class="list-row" data-action="edit-ingredient" data-id="${i.id}">
+      html += `<section><div class="store-head"><h2>${esc(store)}</h2></div>` + list.map(i => `<button class="list-row" data-action="edit-ingredient" data-id="${i.id}">
         <span class="grow"><span class="name">${esc(i.name)}</span> ${i.isLocal ? '<span class="badge local">local</span>' : ''}
-        <div class="sub">${esc(i.aisle ? aisleLabel(i.aisle) : 'no aisle')} · ${esc(i.defaultUnit || '')}${i.lastPrice != null ? ' · ' + money(i.lastPrice) : ''}</div></span><span class="muted">›</span></button>`).join('');
+        <div class="sub">${esc(i.aisle ? aisleLabel(i.aisle) : 'no aisle')} · ${esc(i.defaultUnit || '')}${i.lastPrice != null ? ' · ' + money(i.lastPrice) : ''}</div></span><span class="muted">›</span></button>`).join('') + '</section>';
     }
-    return html;
+    return html + '</div>';
   }
 
   // ---------- Settings ----------
@@ -996,7 +1001,7 @@
     const target = proteinTarget(), ns = notifyState();
     const nsText = { granted: 'On: reminders show while the app is open or in the background.', denied: 'Blocked in Chrome settings. Reminders show on the Today screen instead.',
       default: 'Off. Reminders show on the Today screen.', unsupported: 'Not supported here. Reminders show on the Today screen.' }[ns];
-    return `<h1>Settings</h1>
+    return `<h1>Settings</h1><div class="cols">
       <div class="card edit-only"><h3>Protein</h3>
         <div class="row">${field('Bodyweight (kg)', `<input type="number" inputmode="decimal" step="0.1" data-setting="bodyweightKg" value="${esc(settings.bodyweightKg == null ? '' : settings.bodyweightKg)}">`)}
           ${field('Target (g per kg)', `<input type="number" inputmode="decimal" step="0.1" data-setting="proteinTargetGPerKg" value="${esc(settings.proteinTargetGPerKg)}">`)}</div>
@@ -1016,7 +1021,7 @@
         <button class="btn primary wide" data-action="export">Export (JSON + CSV)</button>
         ${canShare() ? `<button class="btn wide" data-action="share">Share export to Drive…</button>` : ''}
         <label class="btn wide edit-only">Import from JSON<input type="file" accept="application/json,.json" data-change="import" hidden></label>
-        <p class="muted">Meal Planner ${APP_VERSION} · schema ${SCHEMA_VERSION} · ${S.recipes.length} recipes · ${S.mealLogs.length} meals logged</p></div>`;
+        <p class="muted">Meal Planner ${APP_VERSION} · schema ${SCHEMA_VERSION} · ${S.recipes.length} recipes · ${S.mealLogs.length} meals logged</p></div></div>`;
   }
 
   function driveCard() {

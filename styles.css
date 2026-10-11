@@ -214,3 +214,25 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 
 /* View-only devices (kitchen tablet, PC) hide everything that changes data */
 body.viewer .edit-only { display: none !important; }
+
+/* Wide screens (unfolded phone, tablet, PC): use the width instead of a narrow strip.
+   Phones keep the single-column layout above. */
+@media (min-width: 720px) {
+  main, .top { max-width: 1240px; }
+  main { padding-left: 24px; padding-right: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); column-gap: 16px; align-items: start; }
+  .grid.tight { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); column-gap: 12px; }
+  .grid.stores { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); column-gap: 24px; }
+  .grid > .card { margin: 10px 0; }
+  .cols { column-width: 420px; column-gap: 16px; }
+  .cols > .card { break-inside: avoid; display: inline-block; width: 100%; margin: 0 0 16px; }
+  /* Day headers, top button rows and summary cards stay a comfortable width, centred */
+  .day, main > .row, main > .card { max-width: 720px; margin-left: auto; margin-right: auto; }
+  main > .row.wrap > .btn { flex: 1 1 0; }
+  main > .btn.wide { width: auto; min-width: 280px; padding-left: 28px; padding-right: 28px; }
+  main > input[type=search] { max-width: 560px; }
+  /* Sheets become centred dialogs */
+  #modal { align-items: center; padding: 24px; }
+  .sheet { border-radius: 20px; max-height: 88vh; max-width: 600px; padding-bottom: 20px; }
+  #toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+}
