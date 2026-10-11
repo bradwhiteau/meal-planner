@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Bump CACHE whenever any file changes so phones pick up the update.
-const CACHE = 'meal-planner-v5';
+const CACHE = 'meal-planner-v6';
 const FILES = ['./', 'index.html', 'styles.css', 'config.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 

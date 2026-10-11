@@ -578,6 +578,18 @@
     }
     return r;
   }
+  // Finds meal-planner-data/inbox and /outbox in the signed-in user's Drive, so nobody has to copy folder IDs.
+  async function findFolders() {
+    const FOLDER = "mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+    const search = async q => (await (await api(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=${encodeURIComponent('files(id,name)')}&pageSize=20`)).json()).files || [];
+    for (const parent of await search(`name = 'meal-planner-data' and ${FOLDER}`)) {
+      const kids = await search(`'${parent.id}' in parents and ${FOLDER}`);
+      const inbox = kids.find(f => f.name === 'inbox'), outbox = kids.find(f => f.name === 'outbox');
+      if (inbox && outbox && FOLDER_RE.test(inbox.id) && FOLDER_RE.test(outbox.id)) return { inboxId: inbox.id, outboxId: outbox.id };
+    }
+    return null;
+  }
+
   async function listFolder(folderId) {
     if (!FOLDER_RE.test(folderId)) throw new Error('Folder ID looks wrong');
     const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
@@ -1023,7 +1035,7 @@
           ${drive.error ? `<p class="warn-text">${esc(drive.error)}</p>` : ''}
           <div class="row wrap"><button class="btn primary" data-action="drive-sync">${signedIn() ? 'Refresh now' : 'Sign in and refresh'}</button>
             ${signedIn() ? `<button class="btn ghost" data-action="drive-signout">Sign out</button>` : ''}</div>`
-          : '<p class="muted">Paste the outbox folder ID (or the folder\'s Drive link) to connect.</p>'}
+          : `<button class="btn primary wide" data-action="drive-find">Find my folders in Drive</button><p class="muted">Signs in to Google and looks for <b>meal-planner-data</b>. Or paste the outbox folder ID (or the folder's Drive link) above.</p>`}
       </div>`;
     }
     return `<div class="card"><h3>Google Drive</h3>${role}
@@ -1035,7 +1047,7 @@
         <div class="row wrap"><button class="btn primary" data-action="drive-test">${signedIn() ? 'Test connection' : 'Sign in and test'}</button>
           <button class="btn" data-action="drive-sync">Check inbox</button>
           ${signedIn() ? `<button class="btn" data-action="drive-write">Save outbox now</button><button class="btn ghost" data-action="drive-signout">Sign out</button>` : ''}</div>`
-        : '<p class="muted">Paste both folder IDs (the last part of each folder\'s Drive address) to connect.</p>'}
+        : `<button class="btn primary wide" data-action="drive-find">Find my folders in Drive</button><p class="muted">Signs in to Google and looks for <b>meal-planner-data</b>. Or paste both folder IDs (or the folders' Drive links) above.</p>`}
     </div>`;
   }
 
@@ -1548,6 +1560,20 @@
       driveTap({ openInbox: true, report: true });
     },
     'drive-sync'() { driveTap({ openInbox: true, report: true }); },
+    'drive-find'() {
+      const find = async () => {
+        try {
+          const found = await findFolders();
+          if (!found) { toast("Couldn't find meal-planner-data with inbox and outbox folders in your Drive"); return; }
+          dset({ ...found }); drive.pending = []; drive.error = '';
+          render(); renderDriveChip();
+          toast('Found your Drive folders');
+          syncNow(isViewer() ? { force: true, report: true } : { openInbox: true, report: true });
+        } catch (e) { toast('Search failed: ' + e.message); }
+      };
+      if (signedIn()) return find();
+      signIn().then(find, e => { if (!/Loading/.test(e.message)) toast(e.message); });
+    },
     'drive-test'() {
       const test = async () => {
         const d = dget();
@@ -1593,7 +1619,7 @@
 
   // ---------- events ----------
   const VIEWER_OK = new Set(['view', 'menu', 'close-modal', 'day', 'goto-week', 'week', 'shop-week', 'hide-ticked', 'recipe-tag',
-    'edit-recipe', 'edit-slot', 'show-recipe', 'drive', 'drive-sync', 'drive-signout', 'drive-role', 'export', 'share', 'ics', 'enable-notify']);
+    'edit-recipe', 'edit-slot', 'show-recipe', 'drive', 'drive-sync', 'drive-find', 'drive-signout', 'drive-role', 'export', 'share', 'ics', 'enable-notify']);
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-action]');
     if (el && isViewer() && !VIEWER_OK.has(el.dataset.action)) { toast('View-only device: make changes on your phone'); return; }

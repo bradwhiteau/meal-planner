@@ -24,7 +24,7 @@ This needs a Google OAuth **client ID** (public by design, not a secret) in `con
 6. **Clients → Create client**: type **Web application**. Under **Authorized JavaScript origins → Add URI** enter `https://bradwhiteau.github.io` (no path, no trailing slash). Leave redirect URIs empty. **Create**, then copy the **Client ID** (ends in `.apps.googleusercontent.com`).
 7. Put the client ID in `config.js`, bump `CACHE` in `sw.js`, commit and push. (Done: the client ID is in `config.js`.)
 
-Then on the phone: **⋮ → Settings → Google Drive**, paste the **inbox** and **outbox** folder IDs (or the folders' Drive links), and tap **Sign in and test**.
+Then on the phone: **⋮ → Settings → Google Drive**, tap **Find my folders in Drive** (or paste the **inbox** and **outbox** folder IDs or links), then **Test connection**.
 Google will warn that the app isn't verified (it's your own, in Testing mode): tap **Continue**, and tick both Drive boxes.
 
 ### 3. Install it on the phone
@@ -67,7 +67,8 @@ Logging works offline as usual; the outbox catches up the next time the app is o
 ### Other devices (kitchen tablet, PC)
 
 Install the app on another device the same way (Chrome or Edge: **Add to Home screen** or the install icon), then **⋮ → Settings → Google Drive**:
-set **This device** to **View-only**, paste the **outbox** folder ID, and tap **Sign in and refresh**.
+set **This device** to **View-only** and tap **Find my folders in Drive** (it signs in and finds `meal-planner-data` for you;
+pasting the outbox folder ID or link works too).
 
 A view-only device shows the phone's Today, Week, shopping list, pantry and recipes, with a **Recipe** button for ingredients and method.
 It replaces its own copy with `latest.json` on open, when you come back to it, every 5 minutes while showing, and when you tap the chip
