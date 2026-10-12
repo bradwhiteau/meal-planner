@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.4.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -631,6 +631,19 @@
     remember('applied', item.key);
     drive.pending = drive.pending.filter(x => x !== item);
   }
+  // A patch that only adds or edits hand-added shopping items ("add kitty litter") applies without asking.
+  // Anything else (plans, recipes, deletes) still waits for Apply.
+  const isQuickAdd = item => !item.error && item.inc && item.inc.kind === 'patch' && !Object.keys(item.inc.dels).length
+    && Object.keys(item.inc.ups).length === 1 && Array.isArray(item.inc.ups.shoppingItems)
+    && item.inc.ups.shoppingItems.length > 0 && item.inc.ups.shoppingItems.every(r => r.manual === true && !r.ingredientId);
+  async function autoApplyQuickAdds() {
+    const quick = drive.pending.filter(isQuickAdd), names = [];
+    for (const item of quick) {
+      await applyInboxItem(item);
+      item.inc.ups.shoppingItems.forEach(r => r.text && names.push(r.text));
+    }
+    return names;
+  }
 
   // Creates or overwrites a JSON file in a folder; returns its id.
   async function saveDriveFile(folderId, name, text, id) {
@@ -723,13 +736,16 @@
       return;
     }
     drive.busy = true; renderDriveChip();
+    let added = [];
     try {
       await checkInbox();
+      added = await autoApplyQuickAdds();
       drive.error = '';
     } catch (e) { drive.error = 'Checking inbox: ' + e.message; }
     finally { drive.busy = false; }
     await flushOutbox();
     renderDriveChip();
+    if (added.length) { toast(`Added to shopping list: ${added.join(', ')}`); if (!ui.modal) render(); }
     if (opts.openInbox && drive.pending.length) openModal({ type: 'inbox' });
     else if (opts.report) toast(drive.error || (drive.pending.length ? `${drive.pending.length} file${drive.pending.length > 1 ? 's' : ''} in the inbox` : 'Drive is up to date'));
     if (ui.view === 'settings' && !ui.modal) render();

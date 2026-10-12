@@ -102,5 +102,11 @@ with the reason and can only be skipped, so fix it and write a new file with a n
 
 A full export (no `kind`) in the inbox is also accepted. It's treated as upserts under the same rule and never deletes anything.
 
-**Applying is Brad's choice.** The app shows each file's `note` and a summary ("1 recipe updated, 1 week plan new") with Apply and Skip.
+**Quick adds apply on their own.** A patch whose only change is `upserts.shoppingItems` with hand-added items
+(`manual: true`, `text` set, no `ingredientId`) and no deletes is applied automatically at the next inbox check,
+with a toast ("Added to shopping list: Kitty litter"). Use `weekStart` = this week's Monday and give the item every field:
+`weekStart`, `ingredientId: null`, `text`, `qty`, `unit`, `store`, `aisle`, `checked: false`, `price`, `isLocal`, `manual: true`, `forRecipes: ""`.
+This is the one exception to rule 8.
+
+**Applying anything else is Brad's choice.** The app shows each file's `note` and a summary ("1 recipe updated, 1 week plan new") with Apply and Skip.
 Write a clear `note`.
