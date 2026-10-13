@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.4.0';
+  const APP_VERSION = '1.4.1';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -320,8 +320,8 @@
   }
   function notify(body, tag) {
     const opts = { body, tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png' };
-    if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.ready.then(reg => reg.showNotification('Meal Planner', opts));
-    else try { new Notification('Meal Planner', opts); } catch (e) { /* in-app banner covers it */ }
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.ready.then(reg => reg.showNotification('Meal and Shopping Planner', opts));
+    else try { new Notification('Meal and Shopping Planner', opts); } catch (e) { /* in-app banner covers it */ }
   }
   function remindersIcs() {
     const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Meal Planner//EN', 'CALSCALE:GREGORIAN'];
@@ -1037,7 +1037,7 @@
         <button class="btn primary wide" data-action="export">Export (JSON + CSV)</button>
         ${canShare() ? `<button class="btn wide" data-action="share">Share export to Drive…</button>` : ''}
         <label class="btn wide edit-only">Import from JSON<input type="file" accept="application/json,.json" data-change="import" hidden></label>
-        <p class="muted">Meal Planner ${APP_VERSION} · schema ${SCHEMA_VERSION} · ${S.recipes.length} recipes · ${S.mealLogs.length} meals logged</p></div></div>`;
+        <p class="muted">Meal and Shopping Planner ${APP_VERSION} · schema ${SCHEMA_VERSION} · ${S.recipes.length} recipes · ${S.mealLogs.length} meals logged</p></div></div>`;
   }
 
   function driveCard() {
@@ -1552,7 +1552,7 @@
     },
     export() { exportFiles().forEach((f, i) => setTimeout(() => download(f.name, f.text, f.type), i * 400)); toast('Exporting 3 files'); },
     async share() {
-      try { await navigator.share({ files: shareFiles(), title: `Meal Planner export ${ui.today}` }); }
+      try { await navigator.share({ files: shareFiles(), title: `Meal and Shopping Planner export ${ui.today}` }); }
       catch (e) { if (e.name !== 'AbortError') toast('Share failed: ' + e.message); }
     },
 
