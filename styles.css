@@ -236,3 +236,10 @@ body.viewer .edit-only { display: none !important; }
   .sheet { border-radius: 20px; max-height: 88vh; max-width: 600px; padding-bottom: 20px; }
   #toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
 }
+
+/* Today: the day summary stands apart from the meal cards */
+.card.summary { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.extras { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 6px; }
+.extra-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.extra-row .grow { flex: 1; min-width: 0; }
+.store-total { color: var(--text); }

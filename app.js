@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.4.1';
+  const APP_VERSION = '1.5.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -829,30 +829,40 @@
       html += `<div class="card banner"><b>Now</b><ul>${due.map(r => `<li>${esc(r.text)}</li>`).join('')}</ul></div>`;
     }
 
-    html += `<div class="grid"><div class="card protein">
-      <div class="card-head"><span class="slot-label">Protein</span>${target ? `<span class="muted">target ${target} g</span>` : ''}</div>
+    html += '<div class="grid">';
+    // Day summary: protein so far plus quick adds. Sits after the meals.
+    const summary = `<div class="card protein summary">
+      <div class="card-head"><span class="slot-label">Today's protein</span>${target ? `<span class="muted">target ${target} g</span>` : ''}</div>
       <div class="protein-num">${Math.round(got)}<small> ${target ? `/ ${target} g` : 'g'}</small></div>
       ${target ? `<div class="bar"><div class="bar-fill ${got >= target ? 'over' : ''}" style="width:${pct}%"></div></div>`
         : `<p class="muted">Set your bodyweight to see a target. <button class="link" data-action="view" data-view="settings">Settings</button></p>`}
       <div class="row edit-only"><button class="btn primary" data-action="shake">+ Shake</button><button class="btn" data-action="add-food">+ Add food</button></div>
     </div>`;
 
+    // 2. Extra food shows in the meal it was added to; anything without a meal goes with snacks.
+    const extrasFor = k => logs.filter(l => l.extra && (l.slot === k || (k === 'snack' && !SLOTS.includes(l.slot))));
     for (const k of SLOTS) {
       const r = resolveSlot(plan, i, k);
       const slotLogs = logs.filter(l => l.slot === k && !l.extra);
-      if (!r && !slotLogs.length) continue;
+      const extras = extrasFor(k);
+      if (!r && !slotLogs.length && !extras.length) continue;
       html += `<div class="card"><div class="card-head"><span class="slot-label">${SLOT_LABEL[k]}</span>
         <span class="muted">${r ? gram(r.protein) : ''}</span></div>`;
       if (r) html += `<div class="meal-name">${esc(r.label)} ${lactoseBadge(r.recipe)}</div>${r.sub ? `<div class="sub">${esc(r.sub)}</div>` : ''}`;
       if (slotLogs.length) {
         html += slotLogs.map(l => `<div class="row" style="align-items:center"><span class="done-line" style="flex:1">${l.planned ? '✓ Eaten' : `↺ Had ${esc(logLabel(l))}`} · ${gram(l.proteinG)}</span>
           <button class="btn small ghost edit-only" data-action="undo-log" data-id="${l.id}">Undo</button></div>`).join('');
-      } else {
+      } else if (r) {
         html += `<div class="row edit-only"><button class="btn primary" data-action="eat" data-slot="${k}">Eaten</button>
           <button class="btn" data-action="swap" data-slot="${k}">Swap</button></div>`;
       }
       if (r && r.recipe) html += `<div class="row"><button class="btn small ghost" data-action="show-recipe" data-id="${r.recipe.id}"
         ${r.kind === 'recipe' && r.cook ? `data-cook="${r.cook}"` : ''}>Recipe</button></div>`;
+      if (extras.length) {
+        html += `<div class="extras">${r ? '<div class="sub">Also had</div>' : ''}${extras.map(l => `<div class="extra-row">
+          <span class="grow">${esc(logLabel(l))} <span class="muted">· ${gram(l.proteinG)}</span></span>
+          <button class="btn small ghost edit-only" data-action="undo-log" data-id="${l.id}">Remove</button></div>`).join('')}</div>`;
+      }
       html += `</div>`;
     }
     const empty = SLOTS.every(k => !resolveSlot(plan, i, k));
@@ -862,19 +872,13 @@
     else if (empty) html += `<div class="card empty"><p>Nothing planned for ${isToday ? 'today' : 'this day'}.</p>
       <button class="btn" data-action="goto-week">Plan the week</button></div>`;
 
-    const extras = logs.filter(l => l.extra);
-    if (extras.length) {
-      html += `<div class="card"><span class="slot-label">Also eaten</span>${extras.map(l => `<div class="row" style="align-items:center">
-        <span style="flex:1">${esc(logLabel(l))} <span class="muted">· ${gram(l.proteinG)}</span></span>
-        <button class="btn small ghost edit-only" data-action="undo-log" data-id="${l.id}">Remove</button></div>`).join('')}</div>`;
-    }
-
     const prep = remindersFor(date);
     if (prep.length) {
       const hm = ms => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
       html += `<div class="card prep"><span class="slot-label">${isToday ? "Today's prep" : 'Prep'}</span>
         <ul class="ing-list">${prep.map(t => `<li><b>${hm(t.at)}</b> ${esc(t.text)}</li>`).join('')}</ul></div>`;
     }
+    html += summary;
     html += '</div>';
     return html;
   }
@@ -945,7 +949,8 @@
       const inStore = items.filter(i => itemInfo(i).store === store || (store === 'Other' && !storeOrder().slice(0, -1).includes(itemInfo(i).store)));
       if (!inStore.length) continue;
       const shown = inStore.filter(i => !(ui.hideTicked && i.checked));
-      html += `<section><div class="store-head"><h2>${esc(store)}</h2><span class="muted">${inStore.filter(i => !i.checked).length} left</span></div>`;
+      const storeTotal = inStore.filter(i => i.price != null && i.price !== '').reduce((t, i) => t + Number(i.price), 0);
+      html += `<section><div class="store-head"><h2>${esc(store)}</h2><span class="muted">${inStore.filter(i => i.checked).length} of ${inStore.length} in trolley${storeTotal ? ` · <b class="store-total">${money(storeTotal)}</b>` : ''}</span></div>`;
       const aisles = [...new Set(shown.map(i => itemInfo(i).aisle))].sort((a, b) => (a || '~').localeCompare(b || '~', undefined, { numeric: true }));
       for (const a of aisles) {
         const rows = shown.filter(i => itemInfo(i).aisle === a)
