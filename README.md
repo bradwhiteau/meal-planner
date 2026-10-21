@@ -54,7 +54,7 @@ The chip next to the menu shows the state:
 
 | Chip | Meaning |
 |---|---|
-| **Drive: sign in** | Tap to sign in to Google (one tap; a Google window flashes up). Needed after the app has been closed for a while, because the sign-in is kept in memory only. |
+| **Drive: sign in** | Tap to sign in to Google (one tap; a Google window flashes up). The sign-in is kept in memory only and lasts about an hour. Since 1.6.0 the app tries to renew it quietly when you open it, and remembers your account so the tap skips the account chooser. If the phone blocks the quiet attempt, tap the chip as before. |
 | **Inbox 2** | Files from Claude are waiting. Tap to review: each shows Claude's note and a summary, with **Apply** or **Skip**. |
 | **Drive •** | Changes are waiting to be saved to the outbox (about a minute after any change, or when you leave the app). |
 | **Drive ✓** | Up to date. |

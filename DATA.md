@@ -108,5 +108,9 @@ with a toast ("Added to shopping list: Kitty litter"). Use `weekStart` = this we
 `weekStart`, `ingredientId: null`, `text`, `qty`, `unit`, `store`, `aisle`, `checked: false`, `price`, `isLocal`, `manual: true`, `forRecipes: ""`.
 This is the one exception to rule 8.
 
-**Applying anything else is Brad's choice.** The app shows each file's `note` and a summary ("1 recipe updated, 1 week plan new") with Apply and Skip.
-Write a clear `note`.
+**Recipe and plan patches apply on their own too (since 1.6.0).** Any patch with no `deletes` that doesn't touch `mealLogs`
+is applied automatically at the next inbox check, and the app shows its `note` in a toast ("Updated from Claude: …").
+So write a short, clear `note`: it's what Brad sees. Rule 3 still decides what actually changes.
+
+**Still Brad's choice:** patches with deletes, patches that change `mealLogs`, and full exports. The app shows each file's `note`
+and a summary ("1 recipe updated, 1 week plan new") with Apply and Skip.

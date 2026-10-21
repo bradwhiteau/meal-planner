@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.5.0';
+  const APP_VERSION = '1.6.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -541,24 +541,41 @@
     });
     return gisPromise;
   }
-  // Must run straight from a tap: Google's sign-in opens a popup.
-  function signIn() {
+  // Usually runs straight from a tap: Google's sign-in opens a popup.
+  // quiet: try it without a tap (on app open). If the browser blocks the popup, nothing is shown and the chip still works.
+  function signIn(quiet) {
     if (!(window.google && google.accounts && google.accounts.oauth2)) {
+      if (quiet) return Promise.reject(new Error('quiet'));
       loadGis().then(() => toast('Ready: tap again to sign in'), e => toast(e.message));
       return Promise.reject(new Error('Loading Google sign-in…'));
     }
     return new Promise((res, rej) => {
       google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID, scope: SCOPES.join(' '), prompt: '',
+        client_id: CLIENT_ID, scope: SCOPES.join(' '), prompt: quiet ? 'none' : '',
+        // The account signed in last time, so Google skips the account chooser and just flashes the window.
+        ...(dget().hint ? { login_hint: dget().hint } : {}),
         callback: r => {
           if (r.error) return rej(new Error(r.error_description || r.error));
           if (!google.accounts.oauth2.hasGrantedAllScopes(r, ...SCOPES)) return rej(new Error('Drive access wasn\'t granted. Tick both boxes when Google asks.'));
           drive.token = r.access_token; drive.expires = Date.now() + (Number(r.expires_in) || 3600) * 1000; drive.error = '';
+          if (!dget().hint) rememberAccount();
           res();
         },
         error_callback: e => rej(new Error(e && e.type === 'popup_closed' ? 'Sign-in cancelled' : (e && (e.message || e.type)) || 'Sign-in failed')),
       }).requestAccessToken();
     });
+  }
+  // Remembers which Google account is signed in (on this device only) so the next sign-in can skip the chooser.
+  async function rememberAccount() {
+    try {
+      const j = await (await api(`${DRIVE_API}/about?fields=${encodeURIComponent('user(emailAddress)')}`)).json();
+      if (j.user && j.user.emailAddress) dset({ hint: j.user.emailAddress });
+    } catch (e) { /* not important */ }
+  }
+  // On open: if the sign-in has lapsed, try to renew it without asking, then sync.
+  function quietSignIn() {
+    if (signedIn() || !driveReady() || !navigator.onLine || !dget().hint) return;
+    loadGis().then(() => signIn(true)).then(() => { renderDriveChip(); syncNow(); }, () => renderDriveChip());
   }
   function signOut() {
     if (drive.token) {
@@ -566,6 +583,7 @@
       fetch('https://accounts.google.com/o/oauth2/revoke', { method: 'POST', mode: 'no-cors', body }).catch(() => {});
     }
     drive.token = null; drive.expires = 0; drive.pending = [];
+    dset({ hint: '' });
   }
   async function api(url, opts = {}) {
     if (!signedIn()) throw new Error('Not signed in to Google');
@@ -636,13 +654,22 @@
   const isQuickAdd = item => !item.error && item.inc && item.inc.kind === 'patch' && !Object.keys(item.inc.dels).length
     && Object.keys(item.inc.ups).length === 1 && Array.isArray(item.inc.ups.shoppingItems)
     && item.inc.ups.shoppingItems.length > 0 && item.inc.ups.shoppingItems.every(r => r.manual === true && !r.ingredientId);
+  // Since 1.6.0, Claude's recipe and meal-plan patches also apply without asking, as long as they delete nothing
+  // and don't touch meal logs (Brad's record of what he ate). Full exports, deletes and log edits still wait for Apply.
+  const isAutoPatch = item => !item.error && item.inc && item.inc.kind === 'patch' && !isQuickAdd(item)
+    && !Object.keys(item.inc.dels).length && !item.inc.ups.mealLogs && item.plan && item.plan.changes > 0;
   async function autoApplyQuickAdds() {
     const quick = drive.pending.filter(isQuickAdd), names = [];
     for (const item of quick) {
       await applyInboxItem(item);
       item.inc.ups.shoppingItems.forEach(r => r.text && names.push(r.text));
     }
-    return names;
+    const notes = [];
+    for (const item of drive.pending.filter(isAutoPatch)) {
+      await applyInboxItem(item);
+      notes.push(item.inc.note || item.plan.summary);
+    }
+    return { names, notes };
   }
 
   // Creates or overwrites a JSON file in a folder; returns its id.
@@ -736,16 +763,22 @@
       return;
     }
     drive.busy = true; renderDriveChip();
-    let added = [];
+    let added = [], updated = [];
     try {
       await checkInbox();
-      added = await autoApplyQuickAdds();
+      ({ names: added, notes: updated } = await autoApplyQuickAdds());
       drive.error = '';
     } catch (e) { drive.error = 'Checking inbox: ' + e.message; }
     finally { drive.busy = false; }
     await flushOutbox();
     renderDriveChip();
-    if (added.length) { toast(`Added to shopping list: ${added.join(', ')}`); if (!ui.modal) render(); }
+    if (added.length || updated.length) {
+      const msgs = [];
+      if (updated.length) msgs.push(updated.length === 1 ? `Updated from Claude: ${updated[0]}` : `${updated.length} updates from Claude applied: ${updated.join('; ')}`);
+      if (added.length) msgs.push(`Added to shopping list: ${added.join(', ')}`);
+      toast(msgs.join(' · '), 7000);
+      if (!ui.modal) render();
+    }
     if (opts.openInbox && drive.pending.length) openModal({ type: 'inbox' });
     else if (opts.report) toast(drive.error || (drive.pending.length ? `${drive.pending.length} file${drive.pending.length > 1 ? 's' : ''} in the inbox` : 'Drive is up to date'));
     if (ui.view === 'settings' && !ui.modal) render();
@@ -1638,9 +1671,9 @@
 
   // ---------- toast ----------
   let toastTimer;
-  function toast(msg) {
+  function toast(msg, ms = 3000) {
     const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
   }
 
   // ---------- events ----------
@@ -1700,7 +1733,8 @@
     const t = todayStr();
     if (t !== ui.today) { if (ui.date === ui.today) ui.date = t; ui.today = t; if (!ui.modal) render(); }
     checkReminders();
-    if (Date.now() - drive.lastCheck > 5 * 60000) syncNow();
+    if (!signedIn()) quietSignIn();
+    else if (Date.now() - drive.lastCheck > 5 * 60000) syncNow();
     renderDriveChip();
   });
   window.addEventListener('online', () => syncNow());
@@ -1720,7 +1754,7 @@
     render();
     renderDriveChip();
     // Google's sign-in script is only fetched once Drive has been set up on this device.
-    if (driveReady() && navigator.onLine) loadGis().catch(() => {});
+    if (driveReady() && navigator.onLine) loadGis().then(quietSignIn, () => {});
     checkReminders();
     setInterval(checkReminders, 30000);
     setInterval(renderDriveChip, 60000);
