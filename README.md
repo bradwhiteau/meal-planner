@@ -45,6 +45,9 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
 - **Pantry tab:** what's on hand is taken off the list. **Baked sourdough** adds a loaf; **Collected eggs** adds eggs.
 - **Today tab:** tap **Eaten** on each planned meal, or **Swap** to log what you had instead. **+ Shake** logs the post-workout shake in one tap; **+ Add food** logs anything off-plan.
   The first time you log a recipe with no protein figure, it asks once and saves it to the recipe.
+  A swapped meal shows what you had as the headline, with the planned meal struck through underneath.
+- **Picking a recipe** (Swap, Add food, or a Week slot): type to search names and tags, or tap from the list. **Usual** at the top is what you've logged most in the last six weeks, favouring the meal you're adding to.
+  Recipe names lead with the food you'd look for, with brand and details in brackets at the end: *Bulgogi with rice (Costco)*, *Shake, post-workout (WPI, Oatly)*.
 - **Recipes tab:** search, filter by tag, add or edit. Typing a new ingredient name creates it; set its store and aisle under **Ingredients**.
   Recipes flagged "contains lactose" show a red ⚠ badge everywhere.
 

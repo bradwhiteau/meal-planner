@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.6.0';
+  const APP_VERSION = '1.7.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -826,7 +826,39 @@
   }
   const trainingChip = (t, action, extra = '') =>
     `<${action ? 'button' : 'span'} class="training ${t}" ${action ? `data-action="${action}" ${extra}` : ''}>${TRAINING[t] || t}</${action ? 'button' : 'span'}>`;
-  const recipeOptions = sel => sortByName(S.recipes).map(r => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>${esc(r.name)}${r.lactose === 'contains' ? ' ⚠' : ''}</option>`).join('');
+  // Recipe picker: a search box over a tap list, with the recipes you actually eat at the top.
+  function usualRecipes(slot) {
+    const since = addDays(ui.today, -42), score = new Map();
+    for (const l of S.mealLogs) {
+      if (!l.recipeId || l.date < since) continue;
+      score.set(l.recipeId, (score.get(l.recipeId) || 0) + (l.slot === slot ? 2 : 1));
+    }
+    return [...score].sort((a, b) => b[1] - a[1]).map(([id]) => byId('recipes', id)).filter(Boolean).slice(0, 6);
+  }
+  function pickRows(m) {
+    const q = (m.q || '').trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean);
+    const row = r => `<button type="button" class="pick-row" data-action="pick-recipe" data-id="${r.id}">
+      <span class="grow">${esc(r.name)}${r.lactose === 'contains' ? ' ⚠' : ''}</span>
+      <span class="muted">${r.proteinPerServingG != null ? gram(r.proteinPerServingG) : ''}</span></button>`;
+    if (words.length) {
+      const hits = sortByName(S.recipes).filter(r => {
+        const hay = `${r.name} ${(r.tags || []).join(' ')}`.toLowerCase();
+        return words.every(w => hay.includes(w));
+      });
+      return hits.length ? hits.map(row).join('') : `<p class="muted">Nothing matches "${esc(m.q)}".</p>`;
+    }
+    const usual = m.slot ? usualRecipes(m.slot) : [];
+    return (usual.length ? `<div class="pick-head">Usual</div>${usual.map(row).join('')}<div class="pick-head">All</div>` : '')
+      + sortByName(S.recipes).map(row).join('');
+  }
+  function recipePicker(m) {
+    const r = m.recipeId && byId('recipes', m.recipeId);
+    const inner = r
+      ? `<div class="picked"><span class="grow">${esc(r.name)}</span><button type="button" class="btn small" data-action="pick-recipe" data-id="">Change</button></div>`
+      : `<input type="search" id="pick-q" placeholder="Search, e.g. shake, eggs, Costco" value="${esc(m.q || '')}">
+        <div id="pick-list" class="pick-list">${pickRows(m)}</div>`;
+    return `<div class="field"><span>Recipe</span>${inner}</div>`;
+  }
   const ingDatalist = () => `<datalist id="ing-names">${sortByName(S.ingredients).map(i => `<option value="${esc(i.name)}">`).join('')}</datalist>`;
   const storeSelect = (m, cur) => `<select data-m="${m}">${[...new Set([...settings.stores, cur].filter(Boolean))].map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
   // A bare number (or number + letter) reads as "Aisle 13"; named aisles show as they are.
@@ -879,17 +911,30 @@
       const slotLogs = logs.filter(l => l.slot === k && !l.extra);
       const extras = extrasFor(k);
       if (!r && !slotLogs.length && !extras.length) continue;
+      // Swapped: what you had becomes the headline, and the plan shrinks to a struck-through note.
+      const swapped = slotLogs.length > 0 && slotLogs.every(l => !l.planned);
+      const headG = swapped ? gram(slotLogs.reduce((t, l) => t + (l.proteinG || 0), 0)) : r ? gram(r.protein) : '';
       html += `<div class="card"><div class="card-head"><span class="slot-label">${SLOT_LABEL[k]}</span>
-        <span class="muted">${r ? gram(r.protein) : ''}</span></div>`;
-      if (r) html += `<div class="meal-name">${esc(r.label)} ${lactoseBadge(r.recipe)}</div>${r.sub ? `<div class="sub">${esc(r.sub)}</div>` : ''}`;
-      if (slotLogs.length) {
+        <span class="muted">${headG}</span></div>`;
+      if (swapped) {
+        html += slotLogs.map(l => {
+          const lr = l.recipeId && byId('recipes', l.recipeId);
+          return `<div class="meal-name">${esc(logLabel(l))} ${lr ? lactoseBadge(lr) : ''}</div>`;
+        }).join('');
+        if (r) html += `<div class="sub">Instead of <s>${esc(r.label)}</s></div>`;
+        html += slotLogs.map(l => `<div class="row" style="align-items:center"><span class="done-line" style="flex:1">↺ Swapped · ${gram(l.proteinG)}</span>
+          <button class="btn small ghost edit-only" data-action="undo-log" data-id="${l.id}">Undo</button></div>`).join('');
+      } else if (r) html += `<div class="meal-name">${esc(r.label)} ${lactoseBadge(r.recipe)}</div>${r.sub ? `<div class="sub">${esc(r.sub)}</div>` : ''}`;
+      if (!swapped && slotLogs.length) {
         html += slotLogs.map(l => `<div class="row" style="align-items:center"><span class="done-line" style="flex:1">${l.planned ? '✓ Eaten' : `↺ Had ${esc(logLabel(l))}`} · ${gram(l.proteinG)}</span>
           <button class="btn small ghost edit-only" data-action="undo-log" data-id="${l.id}">Undo</button></div>`).join('');
-      } else if (r) {
+      } else if (!swapped && r) {
         html += `<div class="row edit-only"><button class="btn primary" data-action="eat" data-slot="${k}">Eaten</button>
           <button class="btn" data-action="swap" data-slot="${k}">Swap</button></div>`;
       }
-      if (r && r.recipe) html += `<div class="row"><button class="btn small ghost" data-action="show-recipe" data-id="${r.recipe.id}"
+      const swapRecipe = swapped && slotLogs[0].recipeId && byId('recipes', slotLogs[0].recipeId);
+      if (swapRecipe) html += `<div class="row"><button class="btn small ghost" data-action="show-recipe" data-id="${swapRecipe.id}">Recipe</button></div>`;
+      else if (!swapped && r && r.recipe) html += `<div class="row"><button class="btn small ghost" data-action="show-recipe" data-id="${r.recipe.id}"
         ${r.kind === 'recipe' && r.cook ? `data-cook="${r.cook}"` : ''}>Recipe</button></div>`;
       if (extras.length) {
         html += `<div class="extras">${r ? '<div class="sub">Also had</div>' : ''}${extras.map(l => `<div class="extra-row">
@@ -1148,7 +1193,7 @@
       const r = m.recipeId && byId('recipes', m.recipeId);
       let body = '';
       if (m.mode === 'recipe') {
-        body = field('Recipe', `<select data-m="recipeId" data-rerender><option value="">Choose…</option>${recipeOptions(m.recipeId)}</select>`)
+        body = recipePicker(m)
           + (r ? `<p>${lactoseBadge(r)} <span class="muted">${r.proteinPerServingG != null ? r.proteinPerServingG + ' g protein per serving' : 'Protein not set yet'} · recipe makes ${r.servings}</span></p>` : '')
           + `<div class="row">${field('Servings eaten', `<input type="number" inputmode="decimal" step="0.5" min="0.5" data-m="servings" data-type="num" value="${esc(m.servings)}">`)}
             ${field('Servings to cook', `<input type="number" inputmode="decimal" step="1" min="1" data-m="cook" data-type="num" value="${esc(m.cook == null ? '' : m.cook)}" placeholder="${r ? r.servings : ''}">`)}</div>
@@ -1176,7 +1221,7 @@
         ${m.extra ? field('Meal', `<div class="seg">${SLOTS.map(k => `<button class="${m.slot === k ? 'on' : ''}" data-action="modal-pick" data-key="slot" data-value="${k}">${SLOT_LABEL[k]}</button>`).join('')}</div>`) : ''}
         <div class="seg" style="margin-top:12px">${[['recipe', 'Recipe'], ['text', 'Something else']].map(([k, l]) =>
           `<button class="${m.mode === k ? 'on' : ''}" data-action="modal-pick" data-key="mode" data-value="${k}">${l}</button>`).join('')}</div>
-        ${m.mode === 'recipe' ? field('Recipe', `<select data-m="recipeId" data-rerender><option value="">Choose…</option>${recipeOptions(m.recipeId)}</select>`)
+        ${m.mode === 'recipe' ? recipePicker(m)
           : field('What', `<input type="text" data-m="text" value="${esc(m.text)}" placeholder="e.g. Sushi from the food court">`)}
         ${r ? `<p>${lactoseBadge(r)}</p>` : ''}
         <div class="row">${field('Servings', `<input type="number" inputmode="decimal" step="0.5" min="0.5" data-m="servings" data-type="num" value="${esc(m.servings)}">`)}
@@ -1329,6 +1374,14 @@
     view(el) { ui.view = el.dataset.view; ui.modal = null; if (ui.view === 'today') ui.date = ui.today; render(); window.scrollTo(0, 0); },
     menu() { openModal({ type: 'menu' }); },
     'close-modal'() { closeModal(); },
+    'pick-recipe'(el) {
+      const m = ui.modal, id = el.dataset.id;
+      m.recipeId = id;
+      if (id) m.q = '';
+      onModalChange('recipeId');
+      renderModal();
+      if (!id) { const q = $('#pick-q'); if (q) q.focus(); }
+    },
     'modal-pick'(el) {
       const v = el.dataset.value;
       setPath(ui.modal, el.dataset.key, v);
@@ -1700,6 +1753,9 @@
           if (back) back.focus();
         });
       }
+    } else if (el.id === 'pick-q' && ui.modal && e.type === 'input') {
+      // Input only: redrawing on blur's change event would swap the list out from under the tap.
+      ui.modal.q = el.value; $('#pick-list').innerHTML = pickRows(ui.modal);
     } else if (el.id === 'recipe-q') {
       ui.recipeQuery = el.value; $('#recipe-list').innerHTML = recipeList();
     }

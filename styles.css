@@ -243,3 +243,15 @@ body.viewer .edit-only { display: none !important; }
 .extra-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .extra-row .grow { flex: 1; min-width: 0; }
 .store-total { color: var(--text); }
+
+/* Recipe picker: search box over a tap list */
+.pick-list { margin-top: 8px; max-height: 46vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; }
+.pick-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); padding: 12px; min-height: 48px; font-size: .98rem; }
+.pick-row:last-child { border-bottom: 0; }
+.pick-row:active { background: color-mix(in srgb, var(--accent) 20%, var(--surface-2)); }
+.pick-row .grow, .picked .grow { flex: 1; min-width: 0; }
+.pick-head { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  padding: 10px 12px 4px; background: var(--surface); }
+.pick-list > p { padding: 12px; margin: 0; }
+.picked { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 12px; font-weight: 600; }
