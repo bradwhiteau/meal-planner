@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.7.0';
+  const APP_VERSION = '1.8.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -867,6 +867,7 @@
 
   function render() {
     document.body.classList.toggle('viewer', isViewer());
+    document.body.dataset.view = ui.view;
     document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === ui.view));
     const main = $('#app');
     const views = { today: renderToday, week: renderWeek, shop: renderShop, pantry: renderPantry, recipes: renderRecipes, ingredients: renderIngredients, settings: renderSettings };
@@ -904,43 +905,39 @@
       <div class="row edit-only"><button class="btn primary" data-action="shake">+ Shake</button><button class="btn" data-action="add-food">+ Add food</button></div>
     </div>`;
 
-    // 2. Extra food shows in the meal it was added to; anything without a meal goes with snacks.
+    // Each meal is a compact card: one line per item, protein on the right, one action per line.
+    // Extra food shows in the meal it was added to; anything without a meal goes with snacks.
     const extrasFor = k => logs.filter(l => l.extra && (l.slot === k || (k === 'snack' && !SLOTS.includes(l.slot))));
+    const doneRow = (l, sub) => {
+      const lr = l.recipeId && byId('recipes', l.recipeId);
+      const name = l.skipped ? 'Skipped' : esc(logLabel(l));
+      const nameHtml = lr ? `<button class="item-name link-plain" data-action="show-recipe" data-id="${lr.id}">${name}</button>` : `<span class="item-name">${name}</span>`;
+      return `<div class="item done ${l.skipped ? 'skipped' : ''}"><span class="item-mark">${l.skipped ? '–' : l.planned || l.extra ? '✓' : '↺'}</span>
+        <div class="item-main">${nameHtml}${sub ? `<div class="item-sub">${sub}</div>` : ''}</div>
+        <span class="item-g">${gram(l.proteinG)}</span>
+        <button class="btn small ghost edit-only item-act" data-action="undo-log" data-id="${l.id}">Undo</button></div>`;
+    };
     for (const k of SLOTS) {
       const r = resolveSlot(plan, i, k);
       const slotLogs = logs.filter(l => l.slot === k && !l.extra);
       const extras = extrasFor(k);
       if (!r && !slotLogs.length && !extras.length) continue;
-      // Swapped: what you had becomes the headline, and the plan shrinks to a struck-through note.
-      const swapped = slotLogs.length > 0 && slotLogs.every(l => !l.planned);
-      const headG = swapped ? gram(slotLogs.reduce((t, l) => t + (l.proteinG || 0), 0)) : r ? gram(r.protein) : '';
-      html += `<div class="card"><div class="card-head"><span class="slot-label">${SLOT_LABEL[k]}</span>
-        <span class="muted">${headG}</span></div>`;
-      if (swapped) {
-        html += slotLogs.map(l => {
-          const lr = l.recipeId && byId('recipes', l.recipeId);
-          return `<div class="meal-name">${esc(logLabel(l))} ${lr ? lactoseBadge(lr) : ''}</div>`;
-        }).join('');
-        if (r) html += `<div class="sub">Instead of <s>${esc(r.label)}</s></div>`;
-        html += slotLogs.map(l => `<div class="row" style="align-items:center"><span class="done-line" style="flex:1">↺ Swapped · ${gram(l.proteinG)}</span>
-          <button class="btn small ghost edit-only" data-action="undo-log" data-id="${l.id}">Undo</button></div>`).join('');
-      } else if (r) html += `<div class="meal-name">${esc(r.label)} ${lactoseBadge(r.recipe)}</div>${r.sub ? `<div class="sub">${esc(r.sub)}</div>` : ''}`;
-      if (!swapped && slotLogs.length) {
-        html += slotLogs.map(l => `<div class="row" style="align-items:center"><span class="done-line" style="flex:1">${l.planned ? '✓ Eaten' : `↺ Had ${esc(logLabel(l))}`} · ${gram(l.proteinG)}</span>
-          <button class="btn small ghost edit-only" data-action="undo-log" data-id="${l.id}">Undo</button></div>`).join('');
-      } else if (!swapped && r) {
-        html += `<div class="row edit-only"><button class="btn primary" data-action="eat" data-slot="${k}">Eaten</button>
-          <button class="btn" data-action="swap" data-slot="${k}">Swap</button></div>`;
+      const pending = r && !slotLogs.length;
+      const total = (pending ? (r.protein || 0) : 0) + [...slotLogs, ...extras].reduce((t, l) => t + (l.proteinG || 0), 0);
+      html += `<div class="card meal"><div class="card-head"><span class="slot-label">${SLOT_LABEL[k]}</span>
+        <span class="head-right"><span class="muted">${gram(total)}</span>
+        <button class="btn small ghost edit-only add-to" data-action="add-to" data-slot="${k}" aria-label="Add food to ${SLOT_LABEL[k].toLowerCase()}">+</button></span></div>`;
+      if (pending) {
+        const nameHtml = r.recipe
+          ? `<button class="item-name link-plain" data-action="show-recipe" data-id="${r.recipe.id}" ${r.kind === 'recipe' && r.cook ? `data-cook="${r.cook}"` : ''}>${esc(r.label)}</button>`
+          : `<span class="item-name">${esc(r.label)}</span>`;
+        html += `<div class="item"><span class="item-mark"></span>
+          <div class="item-main">${nameHtml} ${r.recipe ? lactoseBadge(r.recipe) : ''}${r.sub ? `<div class="item-sub">${esc(r.sub)}</div>` : ''}</div>
+          <span class="item-g">${gram(r.protein)}</span>
+          <span class="split edit-only item-act"><button class="btn small primary" data-action="eat" data-slot="${k}" data-hold="meal-menu">Eaten</button><button class="btn small primary more" data-action="meal-menu" data-slot="${k}" aria-label="More options">⋯</button></span></div>`;
       }
-      const swapRecipe = swapped && slotLogs[0].recipeId && byId('recipes', slotLogs[0].recipeId);
-      if (swapRecipe) html += `<div class="row"><button class="btn small ghost" data-action="show-recipe" data-id="${swapRecipe.id}">Recipe</button></div>`;
-      else if (!swapped && r && r.recipe) html += `<div class="row"><button class="btn small ghost" data-action="show-recipe" data-id="${r.recipe.id}"
-        ${r.kind === 'recipe' && r.cook ? `data-cook="${r.cook}"` : ''}>Recipe</button></div>`;
-      if (extras.length) {
-        html += `<div class="extras">${r ? '<div class="sub">Also had</div>' : ''}${extras.map(l => `<div class="extra-row">
-          <span class="grow">${esc(logLabel(l))} <span class="muted">· ${gram(l.proteinG)}</span></span>
-          <button class="btn small ghost edit-only" data-action="undo-log" data-id="${l.id}">Remove</button></div>`).join('')}</div>`;
-      }
+      html += slotLogs.map(l => doneRow(l, !l.planned && r ? `instead of <s>${esc(r.label)}</s>` : '')).join('');
+      html += extras.map(l => doneRow(l, '')).join('');
       html += `</div>`;
     }
     const empty = SLOTS.every(k => !resolveSlot(plan, i, k));
@@ -1214,6 +1211,15 @@
         <div class="row"><button class="btn primary" data-action="save-slot">Save</button>
           ${day.slots[m.slot] ? `<button class="btn danger" data-action="clear-slot">Clear</button>` : ''}${cancelBtn()}</div>`;
     },
+    mealMenu(m) {
+      const { plan, i } = locateDay(ui.date), r = resolveSlot(plan, i, m.slot);
+      return `<h2>${SLOT_LABEL[m.slot]}${r ? ` <span class="muted">· ${esc(r.label)}</span>` : ''}</h2>
+        <div class="menu">
+          <button class="btn wide" data-action="swap" data-slot="${m.slot}">↺ Had something else</button>
+          <button class="btn wide" data-action="skip" data-slot="${m.slot}">– Didn't eat it</button>
+          ${r && r.recipe ? `<button class="btn wide" data-action="show-recipe" data-id="${r.recipe.id}">Recipe</button>` : ''}
+          ${cancelBtn()}</div>`;
+    },
     log(m) {
       const r = m.mode === 'recipe' && m.recipeId && byId('recipes', m.recipeId);
       const needsProtein = m.mode === 'text' || (r && r.proteinPerServingG == null);
@@ -1392,10 +1398,16 @@
     day(el) { const d = Number(el.dataset.d); ui.date = d ? addDays(ui.date, d) : ui.today; render(); },
     'goto-week'() { ui.week = mondayOf(ui.date); ui.view = 'week'; render(); },
     eat(el) { startEat(el.dataset.slot); },
+    'meal-menu'(el) { openModal({ type: 'mealMenu', slot: el.dataset.slot }); },
+    'add-to'(el) { openModal({ type: 'log', slot: el.dataset.slot, extra: true, mode: 'recipe', recipeId: '', text: '', servings: 1, proteinG: null }); },
+    skip(el) {
+      addLog({ slot: el.dataset.slot, text: 'Skipped', proteinG: 0, servings: 1, planned: false, extra: false, skipped: true });
+      closeModal();
+    },
     swap(el) { openModal({ type: 'log', slot: el.dataset.slot, extra: false, mode: 'recipe', recipeId: '', text: '', servings: 1, proteinG: null }); },
     'add-food'() {
       const h = new Date().getHours();
-      openModal({ type: 'log', slot: h < 10 ? 'breakfast' : h < 15 ? 'lunch' : h < 19 ? 'dinner' : 'snack', extra: true, mode: 'text', recipeId: '', text: '', servings: 1, proteinG: null });
+      openModal({ type: 'log', slot: h < 10 ? 'breakfast' : h < 15 ? 'lunch' : h < 19 ? 'dinner' : 'snack', extra: true, mode: 'recipe', recipeId: '', text: '', servings: 1, proteinG: null });
     },
     shake() {
       const r = shakeRecipe();
@@ -1732,6 +1744,66 @@
   // ---------- events ----------
   const VIEWER_OK = new Set(['view', 'menu', 'close-modal', 'day', 'goto-week', 'week', 'shop-week', 'hide-ticked', 'recipe-tag',
     'edit-recipe', 'edit-slot', 'show-recipe', 'drive', 'drive-sync', 'drive-find', 'drive-signout', 'drive-role', 'export', 'share', 'ics', 'enable-notify']);
+  // ---------- gestures ----------
+  // Hold a button with data-hold for its second action. Swipe sideways on Today to change day,
+  // or right on a shopping item to tick it. Buttons stay as the visible way to do the same things.
+  let hold = null, swipe = null, eatClick = false;
+  const cancelHold = () => { if (hold) { clearTimeout(hold.t); hold = null; } };
+  document.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    eatClick = false;
+    const h = e.target.closest('[data-hold]');
+    if (h && !h.disabled && !isViewer()) {
+      hold = { x: e.clientX, y: e.clientY, t: setTimeout(() => {
+        hold = null; eatClick = true;
+        if (navigator.vibrate) navigator.vibrate(15);
+        if (actions[h.dataset.hold]) actions[h.dataset.hold](h);
+      }, 450) };
+    }
+    if (ui.modal || e.clientX < 24 || e.clientX > innerWidth - 24) return; // leave screen edges to the phone's back gesture
+    const row = ui.view === 'shop' && !isViewer() && e.target.closest('.shop-row');
+    if (row) swipe = { kind: 'tick', el: row.querySelector('.shop-item'), x: e.clientX, y: e.clientY, active: false };
+    else if (ui.view === 'today' && e.target.closest('#app')) swipe = { kind: 'day', el: $('#app'), x: e.clientX, y: e.clientY, active: false };
+  });
+  document.addEventListener('pointermove', e => {
+    if (hold && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 10) cancelHold();
+    if (!swipe) return;
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+    if (!swipe.active) {
+      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { swipe = null; return; } // it's a scroll
+      if (Math.abs(dx) < 12) return;
+      swipe.active = true; cancelHold();
+    }
+    swipe.el.style.transition = 'none';
+    swipe.el.style.transform = `translateX(${swipe.kind === 'day' ? dx * 0.35 : Math.max(0, Math.min(dx, 120))}px)`;
+  });
+  function endSwipe(e) {
+    cancelHold();
+    const sw = swipe; swipe = null;
+    if (!sw || !sw.active) return;
+    eatClick = true;
+    const dx = e && e.type === 'pointerup' ? e.clientX - sw.x : 0, el = sw.el;
+    el.style.transition = 'transform .16s ease, opacity .16s ease';
+    if (sw.kind === 'day' && Math.abs(dx) > 70) {
+      const d = dx < 0 ? 1 : -1;
+      el.style.transform = `translateX(${-d * 60}px)`; el.style.opacity = '0';
+      setTimeout(() => {
+        ui.date = addDays(ui.date, d); render();
+        el.style.transition = 'none'; el.style.transform = `translateX(${d * 60}px)`;
+        void el.offsetWidth;
+        el.style.transition = 'transform .18s ease, opacity .18s ease'; el.style.transform = ''; el.style.opacity = '';
+      }, 160);
+    } else if (sw.kind === 'tick' && dx > 70) {
+      el.style.transform = '';
+      actions.tick(el);
+    } else el.style.transform = '';
+  }
+  document.addEventListener('pointerup', endSwipe);
+  document.addEventListener('pointercancel', () => endSwipe(null));
+  // A hold or swipe shouldn't also count as a tap.
+  document.addEventListener('click', e => { if (eatClick) { eatClick = false; e.stopPropagation(); e.preventDefault(); } }, true);
+  document.addEventListener('contextmenu', e => { if (e.target.closest('[data-hold]')) e.preventDefault(); });
+
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-action]');
     if (el && isViewer() && !VIEWER_OK.has(el.dataset.action)) { toast('View-only device: make changes on your phone'); return; }

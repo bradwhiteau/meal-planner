@@ -39,11 +39,11 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
   - A slot holds a **recipe** (servings eaten, plus servings to cook; the list buys for the servings cooked), **leftovers** of an earlier slot that week, or **free text** with an optional protein estimate.
   - Tap a day's training tag (Weights / Treadmill / HIIT / Rest) to change it. New weeks start from Lift Log's schedule.
   - **Save as template** keeps a week you like for later.
-- **Shop tab:** grouped by store, then aisle. Tap a row to tick it. The **$** button sets price, quantity, store, aisle and "local".
+- **Shop tab:** grouped by store, then aisle. Tap a row, or swipe it right, to tick it. The **$** button sets price, quantity, store, aisle and "local".
   Store, aisle and local are saved to the ingredient, so you fix an item once. **Regenerate** after changing the plan or pantry; ticks, prices and hand-added items are kept.
   A week's first list brings over last week's unticked hand-added items.
 - **Pantry tab:** what's on hand is taken off the list. **Baked sourdough** adds a loaf; **Collected eggs** adds eggs.
-- **Today tab:** tap **Eaten** on each planned meal, or **Swap** to log what you had instead. **+ Shake** logs the post-workout shake in one tap; **+ Add food** logs anything off-plan.
+- **Today tab:** each meal is a card with one line per item and its protein. Tap **Eaten**, or **⋯** (or hold **Eaten**) for *Had something else* or *Didn't eat it*. **+** on a card adds food to that meal; tap an item's name for its recipe. Swipe sideways to change day. **+ Shake** logs the post-workout shake in one tap; **+ Add food** logs anything off-plan.
   The first time you log a recipe with no protein figure, it asks once and saves it to the recipe.
   A swapped meal shows what you had as the headline, with the planned meal struck through underneath.
 - **Picking a recipe** (Swap, Add food, or a Week slot): type to search names and tags, or tap from the list. **Usual** at the top is what you've logged most in the last six weeks, favouring the meal you're adding to.

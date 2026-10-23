@@ -255,3 +255,28 @@ body.viewer .edit-only { display: none !important; }
   padding: 10px 12px 4px; background: var(--surface); }
 .pick-list > p { padding: 12px; margin: 0; }
 .picked { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 12px; font-weight: 600; }
+
+/* Today: compact meal cards, one line per item */
+.card.meal { padding: 12px 14px; }
+.head-right { display: flex; align-items: center; gap: 6px; }
+.add-to { min-height: 32px; min-width: 36px; padding: 2px 10px; font-size: 1.2rem; line-height: 1; }
+.item { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+.item + .item { border-top: 1px solid var(--border); }
+.item-mark { width: 16px; flex: none; text-align: center; color: var(--ok); font-weight: 800; }
+.item-main { flex: 1; min-width: 0; }
+.item-name { font-size: 1.02rem; font-weight: 600; text-align: left; }
+.link-plain { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
+.item-sub { color: var(--muted); font-size: .84rem; margin-top: 1px; }
+.item-g { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: .92rem; }
+.item-act { flex: none; }
+.item.done .item-name { color: var(--muted); font-weight: 500; }
+.item.skipped .item-name { font-style: italic; }
+.item.skipped .item-mark { color: var(--muted); }
+.split { display: inline-flex; }
+.split .btn { border-radius: 10px 0 0 10px; min-width: 76px; }
+.split .btn.more { border-radius: 0 10px 10px 0; min-width: 34px; padding: 6px 8px; border-left: 1px solid color-mix(in srgb, var(--accent-text) 25%, transparent); }
+[data-hold] { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+
+/* Swipes: the page keeps vertical scrolling; sideways movement comes to the app */
+body[data-view="today"] #app, body[data-view="shop"] .shop-row { touch-action: pan-y; }
+.shop-row { position: relative; }
