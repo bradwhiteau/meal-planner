@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.5';
+  const APP_VERSION = '2.0.6';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1177,7 +1177,12 @@
       <div class="day-title"><div class="day-name">${isToday ? 'Today' : dowOf(date)}</div>
         <div class="day-sub">${fmtDate(date)}${!isToday ? ` · <button class="link" data-action="day" data-d="0">back to today</button>` : ''}</div></div>
       <button class="nav" data-action="day" data-d="1" aria-label="Next day">›</button></div>
-      <div class="center">${trainingChip(day.training)}</div>`;
+      <div class="today-head"><div class="card protein summary compact">
+        <div class="card-head"><span class="slot-label">${isToday ? "Today's protein" : 'Protein'}</span>${target ? `<span class="muted">target ${target} g</span>` : ''}</div>
+        <div class="protein-num">${Math.round(got)}<small> ${target ? `/ ${target} g` : 'g'}</small></div>
+        ${target ? `<div class="bar"><div class="bar-fill ${got >= target ? 'over' : ''}" style="width:${pct}%"></div></div>`
+          : `<button class="link" data-action="view" data-view="settings">Set bodyweight for a target</button>`}
+      </div>${trainingChip(day.training)}</div>`;
 
     // Reminders that are due and haven't been dealt with by a notification show up top.
     const due = isToday ? remindersFor(date).filter(r => r.at <= Date.now()) : [];
@@ -1186,14 +1191,7 @@
     }
 
     html += '<div class="grid">';
-    // Day summary: protein so far plus quick adds. Sits after the meals.
-    const summary = `<div class="card protein summary">
-      <div class="card-head"><span class="slot-label">Today's protein</span>${target ? `<span class="muted">target ${target} g</span>` : ''}</div>
-      <div class="protein-num">${Math.round(got)}<small> ${target ? `/ ${target} g` : 'g'}</small></div>
-      ${target ? `<div class="bar"><div class="bar-fill ${got >= target ? 'over' : ''}" style="width:${pct}%"></div></div>`
-        : `<p class="muted">Set your bodyweight to see a target. <button class="link" data-action="view" data-view="settings">Settings</button></p>`}
-      <div class="row edit-only"><button class="btn primary" data-action="shake">+ Shake</button><button class="btn" data-action="add-food">+ Add food</button></div>
-    </div>`;
+
 
     // Each meal is a compact card: one line per item, protein on the right, one action per line.
     // Extra food shows in the meal it was added to; anything without a meal goes with snacks.
@@ -1212,7 +1210,12 @@
       const r = resolveSlot(plan, i, k);
       const slotLogs = logs.filter(l => l.slot === k && !l.extra);
       const extras = extrasFor(k);
-      if (!r && !slotLogs.length && !extras.length) continue;
+      if (!r && !slotLogs.length && !extras.length) {
+        html += `<div class="card meal empty-meal"><div class="card-head"><span class="slot-label">${SLOT_LABEL[k]}</span>
+          <span class="head-right"><span class="muted">nothing planned</span>
+          <button class="btn small ghost edit-only add-to" data-action="add-to" data-slot="${k}" aria-label="Add food to ${SLOT_LABEL[k].toLowerCase()}">+</button></span></div></div>`;
+        continue;
+      }
       const pending = r && !slotLogs.length;
       // "Cooked & eaten" only when cooking leaves portions to put away; a single serve just says Eaten.
       const sl = day.slots[k] || {}, cookAmt = pending && r.kind === 'recipe' && !sl.cooked ? (alloc.slotCook[date + '|' + k] || 0) : 0;
@@ -1252,7 +1255,6 @@
         ${old.map(x => `<li class="warn-text">${esc(recipeName(x.recipeId))} ×${x.qty} in the ${esc(x.location)} since ${fmtDate(x.cookedOn)}: eat or freeze
           <button class="btn small edit-only" data-action="freeze-portion" data-id="${x.id}">Freeze</button></li>`).join('')}</ul></div>`;
     }
-    html += summary;
     html += '</div>';
     return html;
   }
@@ -1818,7 +1820,6 @@
     addLog({ slot, recipeId: r.recipe.id, servings: r.servings, proteinG: r.protein, planned: true, ...(taken.length ? { portionsUsed: taken } : {}) });
     render();
   }
-  function shakeRecipe() { return S.recipes.find(r => r.isShake) || S.recipes.find(r => /shake/i.test(r.name)); }
 
   const actions = {
     view(el) { ui.view = el.dataset.view; ui.modal = null; if (ui.view === 'today') ui.date = ui.today; render(); window.scrollTo(0, 0); },
@@ -1901,18 +1902,6 @@
       closeModal();
     },
     swap(el) { openModal({ type: 'log', slot: el.dataset.slot, extra: false, mode: 'recipe', recipeId: '', text: '', servings: 1, proteinG: null }); },
-    'add-food'() {
-      const h = new Date().getHours();
-      openModal({ type: 'log', slot: h < 10 ? 'breakfast' : h < 15 ? 'lunch' : h < 19 ? 'dinner' : 'snack', extra: true, mode: 'recipe', recipeId: '', text: '', servings: 1, proteinG: null });
-    },
-    shake() {
-      const r = shakeRecipe();
-      if (!r) return toast('Add a recipe with "shake" in the name first');
-      const draw = 1 / (r.servings || 1);
-      if (r.proteinPerServingG == null) return openModal({ type: 'protein', recipeId: r.id, then: { slot: 'snack', servings: 1, planned: false, extra: true, draw }, proteinG: null });
-      addLog({ slot: 'snack', recipeId: r.id, servings: 1, proteinG: r.proteinPerServingG, extra: true, draw });
-      toast(`Shake logged: ${r.proteinPerServingG} g`); render();
-    },
     'save-protein'() {
       const m = ui.modal, r = byId('recipes', m.recipeId);
       if (!(m.proteinG >= 0) || m.proteinG === null) return toast('Enter the protein per serving');

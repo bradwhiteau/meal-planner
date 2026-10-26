@@ -59,9 +59,8 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
 - **Freezer and fridge:** the evening before a meal that needs a frozen portion, Today's prep shows **Move to fridge**. Cooked
   portions in the fridge for 3 days or more get an **eat or freeze** note with a **Freeze** button. Already have cooked meals
   put away? Larder → **🍲 + Prepared meal**.
-- **Today tab:** each meal is a card with one line per item and its protein. Tap **Eaten**, or **⋯** (or hold **Eaten**) for *Had something else* or *Didn't eat it*. **+** on a card adds food to that meal; tap an item's name for its recipe. Swipe sideways to change day. **+ Shake** logs the post-workout shake in one tap; **+ Add food** logs anything off-plan.
-  The first time you log a recipe with no protein figure, it asks once and saves it to the recipe.
-  A swapped meal shows what you had as the headline, with the planned meal struck through underneath.
+- **Today tab:** today's protein and the training tag sit at the top. Every meal shows, even unplanned ones; tap **Eaten**
+  (or **Cooked & eaten**) on a planned meal, **⋯** to swap or skip it, and a meal's **+** to add anything else to it, including the shake (Snack).
 - **Picking a recipe** (Swap, Add food, or a Week slot): type to search names and tags, or tap from the list. **Usual** at the top is what you've logged most in the last six weeks, favouring the meal you're adding to.
   Recipe names lead with the food you'd look for, with brand and details in brackets at the end: *Bulgogi with rice (Costco)*, *Shake, post-workout (WPI, Oatly)*.
 - **Recipes tab:** search, filter by tag, add or edit. Typing a new ingredient name creates it; set its store and aisle under **Ingredients**.

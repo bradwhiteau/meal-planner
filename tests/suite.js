@@ -311,7 +311,7 @@
     t.has('Today flags the old fridge portions', c.$('.card.prep') ? c.$('.card.prep').innerText : '', 'eat or freeze');
     await c.click('[data-action="freeze-portion"]', 150);
     t.ok('Freeze moved them', (await c.larder()).includes(`🍲bol×2@Freezer`));
-    await c.click('[data-action="add-food"]', 60);
+    await c.click('[data-action="add-to"][data-slot="snack"]', 60);
     await c.click('#modal [data-action="pick-recipe"][data-id="bol"]', 60);
     const before = (await c.larder()).filter(x => x.startsWith('🍲'));
     await c.click('[data-action="save-log"]', 150);
@@ -353,7 +353,7 @@
     t.ok('An opened location stays open after + / −', c.$$('.larder-loc').find(x => x.querySelector('.loc-name').innerText === 'Fridge').open);
     t.eq('…and the − worked', await c.larder(), ['pepsi:30each@Pantry Ground', 'pepsi:5each@Fridge']);
     await c.go(c.w.__mp.today());
-    await c.click('[data-action="add-food"]', 60);
+    await c.click('[data-action="add-to"][data-slot="snack"]', 60);
     await c.click('#modal [data-action="pick-recipe"][data-id="can"]', 60);
     await c.click('[data-action="save-log"]', 150);
     t.eq('Drinking one takes it from the fridge', await c.larder(), ['pepsi:30each@Pantry Ground', 'pepsi:4each@Fridge']);
@@ -375,12 +375,16 @@
   scenario('A meal card holding only extra food (crash fixed in 2.0.2)', async (c, t) => {
     await c.importJson(patch({ recipes: [mk('tea', { name: 'Tea', servings: 1, proteinPerServingG: 1, lactose: 'none', tags: [], method: '', ingredients: [] })] }));
     await c.go(c.w.__mp.today());
-    await c.click('[data-action="add-food"]', 60);
+    await c.click('[data-action="add-to"][data-slot="lunch"]', 60);
     await c.click('#modal [data-action="modal-pick"][data-key="slot"][data-value="lunch"]', 40);
     await c.click('#modal [data-action="modal-pick"][data-key="mode"][data-value="text"]', 40);
     await c.set('#modal [data-m="text"]', 'Glass of orange juice'); await c.set('#modal [data-m="proteinG"]', '2');
     await c.click('[data-action="save-log"]', 150);
     t.ok('The sheet closed', c.$('#modal').hidden);
+    t.ok('Protein summary sits at the top, beside the training tag', c.$('.today-head .protein-num') && c.$('.today-head .training'));
+    t.eq('All four meals show, each with its +', c.$$('.card.meal').map(x => x.querySelector('.slot-label').innerText.trim().toLowerCase() + (x.querySelector('[data-action="add-to"]') ? '+' : '')),
+      ['breakfast+', 'lunch+', 'dinner+', 'snack+']);
+    t.ok('No + Shake / + Add food buttons any more', !c.$('[data-action="shake"]') && !c.$('[data-action="add-food"]'));
     t.has('Lunch card shows the extra', c.card('lunch') ? c.card('lunch').innerText : '(no lunch card)', 'Glass of orange juice');
     t.has('Protein total counts it', c.$('.protein-num').innerText, '2');
   });
@@ -439,7 +443,7 @@
     await c.click('[data-action="drive-sync"]', 1200);
     t.ok('Checking again brings nothing back', c.$('#modal').hidden && !/Inbox \d/.test(c.$('#drive-chip').textContent), c.$('#drive-chip').textContent);
     await c.go(c.w.__mp.today());
-    await c.click('[data-action="add-food"]', 60);
+    await c.click('[data-action="add-to"][data-slot="snack"]', 60);
     await c.click('#modal [data-action="modal-pick"][data-key="mode"][data-value="text"]', 40);
     await c.set('#modal [data-m="text"]', 'Chicken wrap'); await c.set('#modal [data-m="proteinG"]', '35');
     await c.click('[data-action="save-log"]', 150);

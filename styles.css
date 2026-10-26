@@ -321,3 +321,16 @@ body.viewer .stepper.stacked .qty { grid-row: auto; }
 .larder-loc > summary .loc-name::before { content: '▸'; display: inline-block; width: 1.1em; color: var(--muted); transition: transform .15s; }
 .larder-loc[open] > summary .loc-name::before { transform: rotate(90deg); }
 .larder-loc .larder-list { padding: 2px 0 0 6px; }
+
+/* Today: protein summary beside the training tag, at the top */
+.today-head { display: flex; align-items: center; gap: 12px; margin: 4px 0 8px; }
+.card.summary.compact { flex: 1; min-width: 0; margin: 0; padding: 10px 12px; }
+.compact .card-head .slot-label, .compact .card-head .muted { font-size: .72rem; }
+.compact .protein-num { font-size: 1.45rem; line-height: 1.2; }
+.compact .protein-num small { font-size: .85rem; }
+.compact .bar { height: 8px; margin-top: 6px; }
+.compact .link { font-size: .85rem; padding: 2px 0; }
+.today-head .training { flex: none; }
+.card.meal.empty-meal { padding-top: 8px; padding-bottom: 8px; }
+.card.meal.empty-meal .card-head { margin: 0; }
+@media (min-width: 720px) { .today-head { max-width: 720px; margin-left: auto; margin-right: auto; } }
