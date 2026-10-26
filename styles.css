@@ -309,3 +309,15 @@ body[data-view="today"] #app, body[data-view="shop"] .shop-row { touch-action: p
 .stepper.stacked .minus { grid-row: 2; grid-column: 2; width: 44px; height: 38px; font-size: 1.25rem; }
 body.viewer .stepper.stacked { grid-template-columns: auto; grid-template-rows: auto; }
 body.viewer .stepper.stacked .qty { grid-row: auto; }
+
+/* Larder: actions at the top, locations that fold */
+.larder-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0 14px; }
+.larder-actions .btn { min-height: 48px; }
+.larder-loc { margin: 8px 0; }
+.larder-loc > summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; list-style: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-height: 52px; }
+.larder-loc > summary::-webkit-details-marker { display: none; }
+.larder-loc > summary .loc-name { font-size: 1.15rem; font-weight: 700; }
+.larder-loc > summary .loc-name::before { content: '▸'; display: inline-block; width: 1.1em; color: var(--muted); transition: transform .15s; }
+.larder-loc[open] > summary .loc-name::before { transform: rotate(90deg); }
+.larder-loc .larder-list { padding: 2px 0 0 6px; }

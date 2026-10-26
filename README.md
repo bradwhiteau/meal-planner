@@ -42,7 +42,7 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
 - **Shop tab:** grouped by store, then aisle. Tap a row, or swipe it right, to tick it. The **$** button sets price, quantity, store, aisle and "local".
   Store, aisle and local are saved to the ingredient, so you fix an item once. **Regenerate** after changing the plan or pantry; ticks, prices and hand-added items are kept.
   A week's first list brings over last week's unticked hand-added items.
-- **Larder tab:** what's on hand, grouped by location (Fridge, Freezer, Pantry Shelf 1…; edit the list in Settings). It works by itself:
+- **Larder tab:** **+ Add to larder**, **🍲 + Prepared meal**, **Baked sourdough** and **Collected eggs** sit at the top. Below, each location (Fridge, Freezer, Pantry Shelf 1…; edit the list in Settings) folds open and closed, showing its 🍲 meals and item count, with ⚠ if something inside needs eating or freezing. It works by itself:
   ticking a bought item on the Shop tab adds it, and tapping **Eaten** on a meal you cooked takes that recipe's ingredients out
   (the whole batch; leftovers take nothing). Undo puts it back. Anything at zero moves to **Run out**; tap it to restock or
   remove it. **Baked sourdough** adds a loaf; **Collected eggs** adds eggs.

@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.4';
+  const APP_VERSION = '2.0.5';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1395,18 +1395,24 @@
     const stocked = ingRows.filter(p => Number(p.qty) > 0), out = ingRows.filter(p => !(Number(p.qty) > 0)).sort(byName);
     const meals = S.pantryItems.filter(p => isPortion(p) && Number(p.qty) > 0);
     const mealName = x => (byId('recipes', x.recipeId) || {}).name || '';
+    // The everyday actions sit at the top; each location folds away (closed until opened, remembered on this device).
     let html = `<h1>Larder</h1>
-      <div class="row edit-only"><button class="btn" data-action="baked">🍞 Baked sourdough</button><button class="btn" data-action="eggs">🥚 Collected eggs</button></div>
-      <p class="muted">What's here comes off the shopping list. Ticking a bought item adds it; cooking a meal takes its ingredients out. 🍲 = prepared meals.</p>
+      <div class="larder-actions edit-only">
+        <button class="btn" data-action="add-pantry">+ Add to larder</button><button class="btn" data-action="add-portion">🍲 + Prepared meal</button>
+        <button class="btn" data-action="baked">🍞 Baked sourdough</button><button class="btn" data-action="eggs">🥚 Collected eggs</button></div>
       <div class="grid stores">`;
+    const open = larderOpen();
     // Each location lists its prepared meals first (oldest first), then ingredients A–Z.
     for (const loc of locationOrder()) {
       const here = meals.filter(x => (x.location || '') === loc)
         .sort((a, b) => String(a.cookedOn || '').localeCompare(String(b.cookedOn || '')) || mealName(a).localeCompare(mealName(b)));
       const rows = stocked.filter(p => locOf(p) === loc).sort(byName);
       if (!rows.length && !here.length) continue;
-      html += `<section><div class="store-head"><h2>${esc(loc || 'No location')}</h2><span class="muted">${here.length + rows.length}</span></div>
-        <div class="larder-list">${here.map(mealRow).join('')}${rows.map(larderRow).join('')}</div></section>`;
+      const due = here.some(useByDue), key = loc || '~none';
+      html += `<details class="larder-loc" data-loc="${esc(key)}" ${open.includes(key) ? 'open' : ''}>
+        <summary><span class="loc-name">${esc(loc || 'No location')}</span>
+          <span class="muted">${due ? '<span class="warn-text" title="Something here needs eating or freezing">⚠</span> ' : ''}${here.length ? `🍲${here.length} · ` : ''}${here.length + rows.length}</span></summary>
+        <div class="larder-list">${here.map(mealRow).join('')}${rows.map(larderRow).join('')}</div></details>`;
     }
     html += '</div>';
     if (!stocked.length && !meals.length) html += `<div class="card empty"><p>The larder's empty.</p><p class="muted">Tick items on the shopping list as you buy them, or add what you already have.</p></div>`;
@@ -1415,7 +1421,14 @@
         <p class="muted">Tap one to restock or remove it. Remove anything you won't buy again.</p>
         <div class="grid tight">${out.map(larderRow).join('')}</div></details>`;
     }
-    return html + `<div class="row edit-only"><button class="btn" data-action="add-pantry">+ Add to larder</button><button class="btn" data-action="add-portion">🍲 + Prepared meal</button></div>`;
+    return html;
+  }
+  // Which Larder locations are open, kept on this device only.
+  function larderOpen() { try { return JSON.parse(localStorage.getItem(LS + 'larderOpen') || '[]'); } catch (e) { return []; } }
+  function setLarderOpen(key, isOpen) {
+    const list = larderOpen().filter(k => k !== key);
+    if (isOpen) list.push(key);
+    try { localStorage.setItem(LS + 'larderOpen', JSON.stringify(list)); } catch (e) { /* ignore */ }
   }
 
   // ---------- Recipes ----------
@@ -2376,6 +2389,11 @@
     }
   }
   document.addEventListener('input', onField);
+  // <details> toggles don't bubble, so listen in the capture phase.
+  document.addEventListener('toggle', e => {
+    const el = e.target;
+    if (el.classList && el.classList.contains('larder-loc')) setLarderOpen(el.dataset.loc, el.open);
+  }, true);
   document.addEventListener('change', e => {
     const el = e.target;
     if (el.dataset.change === 'import' && el.files[0]) { importFile(el.files[0]); el.value = ''; return; }

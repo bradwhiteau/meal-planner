@@ -92,6 +92,12 @@
       async go(date) { w.__mp.go(date); await sleep(60); },
       async week(weekStart) { w.__mp.week(weekStart); await sleep(60); },
       async shop(weekStart) { w.__mp.shop(weekStart); await sleep(60); },
+      // A Larder location panel (opened, so its rows are visible).
+      loc(name) {
+        const el = $$('.larder-loc').find(x => x.querySelector('.loc-name').innerText.trim() === name);
+        if (el && !el.open) el.open = true;
+        return el;
+      },
       card: slot => $$('.card.meal').find(x => x.querySelector('.slot-label').innerText.trim().toLowerCase() === slot),
       shopRow: name => $$('.shop-row').find(r => r.innerText.includes(name)),
       shopText: name => { const r = c.shopRow(name); return r ? r.innerText.replace(/\s*\n\s*/g, ' | ') : '(no line)'; },
@@ -298,7 +304,9 @@
     await c.set('#modal [data-m="draft.recipeId"]', 'bol'); await c.set('#modal [data-m="draft.qty"]', '2');
     await c.set('#modal [data-m="draft.location"]', 'Fridge'); await c.set('#modal [data-m="draft.cookedOn"]', fourDaysAgo);
     await c.click('[data-action="save-portion"]', 150);
-    t.has('Prepared meal shows in the Fridge with 🍲 and eat or freeze', c.$$('#app section').find(s => s.querySelector('h2').innerText === 'Fridge').innerText, 'eat or freeze');
+    t.has('A closed Fridge shows ⚠ when something needs eating or freezing', c.$$('.larder-loc').find(x => x.querySelector('.loc-name').innerText.trim() === 'Fridge').querySelector('summary').innerText, '⚠');
+    await sleep(30);
+    t.has('Prepared meal shows in the Fridge with 🍲 and eat or freeze', c.loc('Fridge').innerText, 'eat or freeze');
     await c.go(c.w.__mp.today());
     t.has('Today flags the old fridge portions', c.$('.card.prep') ? c.$('.card.prep').innerText : '', 'eat or freeze');
     await c.click('[data-action="freeze-portion"]', 150);
@@ -335,6 +343,15 @@
     await addTo(5, 'Fridge');
     await addTo(30, 'Pantry Ground');
     t.eq('5 in the Fridge and 30 on Pantry Ground, separately', await c.larder(), ['pepsi:30each@Pantry Ground', 'pepsi:5each@Fridge']);
+    await addTo(1, 'Fridge');
+    t.eq('Adding 1 more to the Fridge joins the same row (6)', await c.larder(), ['pepsi:30each@Pantry Ground', 'pepsi:6each@Fridge']);
+    await c.tab('pantry');
+    t.eq('Larder actions sit at the top', c.$$('.larder-actions .btn').map(b => b.innerText.trim()), ['+ Add to larder', '🍲 + Prepared meal', '🍞 Baked sourdough', '🥚 Collected eggs']);
+    t.ok('Locations start closed', c.$$('.larder-loc').length === 2 && c.$$('.larder-loc').every(x => !x.open), c.$$('.larder-loc').map(x => x.open));
+    c.loc('Fridge').dispatchEvent(new c.w.Event('toggle'));   // what the browser fires when it's tapped open
+    await c.click(c.loc('Fridge').querySelector('[data-action="pantry-step"][data-d="-1"]'), 120);
+    t.ok('An opened location stays open after + / −', c.$$('.larder-loc').find(x => x.querySelector('.loc-name').innerText === 'Fridge').open);
+    t.eq('…and the − worked', await c.larder(), ['pepsi:30each@Pantry Ground', 'pepsi:5each@Fridge']);
     await c.go(c.w.__mp.today());
     await c.click('[data-action="add-food"]', 60);
     await c.click('#modal [data-action="pick-recipe"][data-id="can"]', 60);
@@ -349,7 +366,7 @@
     await c.click('[data-action="tick"]', 150);
     t.eq('Unticking takes them from the same spot', await c.larder(), ['pepsi:30each@Pantry Ground', 'pepsi:5each@Fridge']);
     await c.tab('pantry');
-    await c.click(c.$$('#app section').find(s => s.querySelector('h2').innerText === 'Fridge').querySelector('[data-action="edit-pantry"]'));
+    await c.click(c.loc('Fridge').querySelector('[data-action="edit-pantry"]'));
     await c.set('#modal [data-m="draft.location"]', 'Pantry Ground');
     await c.click('[data-action="save-pantry"]', 150);
     t.eq('Moving the fridge row onto Pantry Ground merges them', await c.larder(), ['pepsi:35each@Pantry Ground']);
