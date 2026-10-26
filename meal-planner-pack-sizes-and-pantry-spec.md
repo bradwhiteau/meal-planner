@@ -3,7 +3,7 @@
 Spec for Claude Code. Repo: `meal-planner` (app.js, README.md, DATA.md, sw.js).
 
 - **1.9.0, built:** pack sizes and per-pack prices, buying into the Larder, cooking out of it, locations, Run out.
-- **2.0.0, agreed, not built:** prepared meals (portions) in the Larder, Cooked vs Eaten, Move to fridge, use-by flag,
+- **2.0.0, built:** prepared meals (portions) in the Larder, Cooked vs Eaten, Move to fridge, use-by flag,
   portions covering the plan before shopping.
 
 ## Why
@@ -98,7 +98,53 @@ Rice bowl (500 g rice, cooked Mon, leftovers Tue), Big rice next week (1.2 kg), 
 
 ---
 
-## 2.0.0 (agreed, not built)
+## 2.0.0 (built)
+
+`APP_VERSION = '2.0.0'`, `CACHE = 'meal-planner-v16'`, `schemaVersion` stays 1.
+
+### As built
+
+- **Prepared meals** are `pantryItems` rows with `recipeId` (no `ingredientId`): `qty` = portions, `unit: 'portion'`,
+  `location`, `cookedOn`. One row per recipe, location and cook date; eaten down to 0 → removed. Larder → **Prepared meals**
+  section at the top, with **+ Add a prepared meal** for meals already put away.
+- **Eaten on a cook slot** that still needs cooking cooks it: if the cook leaves spare portions the button reads
+  **Cooked & eaten** and a sheet asks where they went (Portions made, Eaten now, a stepper per fridge/freezer location;
+  suggestion: next 3 days' meals of that recipe → Fridge, rest → Freezer). Single serves (oats) keep **Eaten** and skip the sheet.
+  The slot records `cooked: {on, made, pantryUsed, portionsAdded}`.
+- **⋯ → Cooked, eating later** cooks without eating (Sunday batch); **⋯ → Undo cooked** reverses it (only once the meal's
+  own log is undone).
+- **Eaten** on leftovers, a cooked slot, or a meal the Larder covers takes portions: fridge first, oldest first. The log
+  keeps `portionsUsed`; Undo puts them back where they were. Off-plan recipes (+ Add food, Swap) take portions first and
+  draw ingredients only for the rest.
+- **Allocation (`weekAlloc`):** per recipe, servings still to eat that week vs portions free for that week. Portions are
+  reserved for earlier weeks' meals first (from this week on), so planning next week doesn't count a portion already promised
+  to this Thursday. *(Found in testing; not in the original plan.)* Batch recipes cook the full batch if anything is
+  uncovered; others cook `min(cook, uncovered)` only when the Larder covers some, otherwise the plan's cook.
+- **Week** shows "from the larder", "larder covers 3 · cooking 6 leaves 4 spare", or "cooked 6".
+- **Night before:** if tomorrow's portion meals need more than the fridge holds and the freezer has some, Today's prep shows
+  "Move N × recipe from the freezer to the fridge" with a **Move to fridge** button (replaces the old leftover `freezer` flag
+  text for portion meals).
+- **Use-by:** fridge portions cooked 3+ days ago show "eat or freeze" in the Larder and on Today's prep, with **Freeze**.
+- Copies of a week and templates drop `cooked`; editing a cooked slot keeps it if the recipe is unchanged.
+- Validation: portion rows, `slot.cooked`, `portionsUsed` and `cookedSlot` are optional and sanitised.
+
+### Tested (2.0.0)
+
+Bolognese (6 portions, tag batch: 1 kg mince, 700 g passata) cooked Mon lunch, leftovers Tue and Thu dinner; oats breakfast.
+
+1. Mon lunch shows **Cooked & eaten**; oats show **Eaten**. ✓
+2. Cooked & eaten → sheet suggests 1 fridge (Tue), 4 freezer; Save → mince and passata out, 5 portions in. ✓
+3. Undo → ingredients back, portions gone, button back to Cooked & eaten. ✓
+4. Tue leftovers → takes the fridge portion. ✓
+5. Wed prep: "Move 1 × Bolognese from the freezer to the fridge"; button moves it. ✓
+6. Next week needs 2, 4 portions with 1 promised to Thu → "from the larder", empty list. ✓
+7. Next week needs 5 → "larder covers 3 · cooking 6 leaves 4 spare"; mince and passata on the list. ✓
+8. Prepared meal added by hand (fridge, 4 days old) → "eat or freeze"; **Freeze** moves it. ✓
+9. + Add food Bolognese → takes a portion, no ingredients. ✓
+10. Cooked, eating later → 6 portions put away, button becomes Eaten; Undo cooked → back. ✓
+11. Real `latest.json` (1.9 data): every tab renders, no errors. ✓
+
+## 2.0.0 (as agreed beforehand)
 
 ### Prepared meals in the Larder
 

@@ -290,3 +290,13 @@ body[data-view="today"] #app, body[data-view="shop"] .shop-row { touch-action: p
 .pantry-row.out { opacity: .55; }
 .run-out { margin: 18px 0 8px; }
 .run-out summary { cursor: pointer; font-weight: 700; color: var(--muted); padding: 10px 0; min-height: 44px; }
+
+/* Prepared meals and the Cooked sheet */
+.meals { margin: 14px 0 6px; }
+.pantry-row.portion .portion-count { font-weight: 700; font-variant-numeric: tabular-nums; padding: 0 8px; white-space: nowrap; }
+.pantry-row.portion .portion-count small { font-weight: 400; color: var(--muted); }
+.pantry-row.portion.due { border-color: var(--warn); }
+.pantry-row.portion.due .sub { color: var(--warn); }
+.cook-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }
+.cook-row .stepper .qty { min-width: 2.5em; display: inline-block; text-align: center; }
+.prep li .btn.small { margin-left: 6px; min-height: 32px; padding: 4px 10px; }

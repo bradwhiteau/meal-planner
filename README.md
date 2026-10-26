@@ -49,6 +49,16 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
 - **Pack sizes:** on the Shop tab's **$** sheet (or in Ingredients), set how the shop sells it, e.g. 1 kg. The list then buys whole
   packs ("Rice · 1 × 1 kg", with "need 500 g · 200 g in larder" underneath), and the price you enter becomes the price per pack,
   so next week's estimate scales. Bought a different amount? Change **Bought** and the larder follows.
+- **Cooking a batch:** a meal that makes more than you eat shows **Cooked & eaten**. Tap it and say where the other portions
+  went (it suggests the fridge for the next 3 days' meals, the rest to the freezer); the ingredients come out of the larder and
+  the portions go in as **Prepared meals**. Leftovers and later meals of that recipe then just say **Eaten** and take a portion,
+  fridge first. Cooked ahead (Sunday batch)? Use **⋯ → Cooked, eating later**. Undo puts everything back.
+- **Portions count before shopping:** spare portions in the larder cover the week's meals of that recipe first. Week shows it,
+  e.g. "larder covers 2 · cooking 6 leaves 3 spare" or "from the larder". Batch recipes still cook a full batch when anything is
+  short; the spare goes in the freezer.
+- **Freezer and fridge:** the evening before a meal that needs a frozen portion, Today's prep shows **Move to fridge**. Cooked
+  portions in the fridge for 3 days or more get an **eat or freeze** note with a **Freeze** button. Already have cooked meals
+  put away? Larder → **+ Add a prepared meal**.
 - **Today tab:** each meal is a card with one line per item and its protein. Tap **Eaten**, or **⋯** (or hold **Eaten**) for *Had something else* or *Didn't eat it*. **+** on a card adds food to that meal; tap an item's name for its recipe. Swipe sideways to change day. **+ Shake** logs the post-workout shake in one tap; **+ Add food** logs anything off-plan.
   The first time you log a recipe with no protein figure, it asks once and saves it to the recipe.
   A swapped meal shows what you had as the headline, with the planned meal struck through underneath.
