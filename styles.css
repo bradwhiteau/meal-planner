@@ -280,3 +280,13 @@ body.viewer .edit-only { display: none !important; }
 /* Swipes: the page keeps vertical scrolling; sideways movement comes to the app */
 body[data-view="today"] #app, body[data-view="shop"] .shop-row { touch-action: pan-y; }
 .shop-row { position: relative; }
+
+/* Shop: the need and the larder's share under what to buy */
+.si-need { display: block; color: var(--muted); font-size: .8rem; margin-top: 1px; }
+
+/* Larder */
+.larder-name { background: none; border: 0; padding: 0; text-align: left; font: inherit; font-weight: 600; color: inherit; }
+.larder-name .sub { display: block; font-weight: 400; font-size: .78rem; }
+.pantry-row.out { opacity: .55; }
+.run-out { margin: 18px 0 8px; }
+.run-out summary { cursor: pointer; font-weight: 700; color: var(--muted); padding: 10px 0; min-height: 44px; }

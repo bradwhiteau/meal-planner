@@ -42,7 +42,13 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
 - **Shop tab:** grouped by store, then aisle. Tap a row, or swipe it right, to tick it. The **$** button sets price, quantity, store, aisle and "local".
   Store, aisle and local are saved to the ingredient, so you fix an item once. **Regenerate** after changing the plan or pantry; ticks, prices and hand-added items are kept.
   A week's first list brings over last week's unticked hand-added items.
-- **Pantry tab:** what's on hand is taken off the list. **Baked sourdough** adds a loaf; **Collected eggs** adds eggs.
+- **Larder tab:** what's on hand, grouped by location (Fridge, Freezer, Pantry Shelf 1…; edit the list in Settings). It works by itself:
+  ticking a bought item on the Shop tab adds it, and tapping **Eaten** on a meal you cooked takes that recipe's ingredients out
+  (the whole batch; leftovers take nothing). Undo puts it back. Anything at zero moves to **Run out**; tap it to restock or
+  remove it. **Baked sourdough** adds a loaf; **Collected eggs** adds eggs.
+- **Pack sizes:** on the Shop tab's **$** sheet (or in Ingredients), set how the shop sells it, e.g. 1 kg. The list then buys whole
+  packs ("Rice · 1 × 1 kg", with "need 500 g · 200 g in larder" underneath), and the price you enter becomes the price per pack,
+  so next week's estimate scales. Bought a different amount? Change **Bought** and the larder follows.
 - **Today tab:** each meal is a card with one line per item and its protein. Tap **Eaten**, or **⋯** (or hold **Eaten**) for *Had something else* or *Didn't eat it*. **+** on a card adds food to that meal; tap an item's name for its recipe. Swipe sideways to change day. **+ Shake** logs the post-workout shake in one tap; **+ Add food** logs anything off-plan.
   The first time you log a recipe with no protein figure, it asks once and saves it to the recipe.
   A swapped meal shows what you had as the headline, with the planned meal struck through underneath.
