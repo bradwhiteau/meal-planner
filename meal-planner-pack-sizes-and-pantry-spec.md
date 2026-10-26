@@ -74,6 +74,10 @@ stops a mid-shop Regenerate from deleting what was just bought.
   Pantry Ground; editable in Settings), then "No location". Each row shows when it last changed.
 - Rows at 0 move to a collapsed **Run out (n)** group; tap to restock or **Remove from larder**.
 - Locations: an ingredient's `location` is its usual spot; new Larder rows take it.
+- **2.0.2:** one row per ingredient *and location* (5 cans in the Fridge, 30 on Pantry Ground). Ticking adds to the usual spot;
+  using stock takes from the fridge first; `pantryAdded` / `pantryUsed` record the location so Undo returns it there;
+  moving a row onto a location that already has that ingredient merges them. (1.9–2.0.1 kept one row per ingredient,
+  so adding to a second location landed in the first.) Also fixed: Today crashed on a meal card holding only extra food.
 
 ### Housekeeping
 

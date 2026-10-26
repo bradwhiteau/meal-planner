@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.1';
+  const APP_VERSION = '2.0.2';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -341,11 +341,13 @@
   function larderIn(it) {
     const b = it.ingredientId && boughtOf(it);
     if (!b) return;
-    pantryAdd(it.ingredientId, b.qty, b.unit);
-    it.pantryAdded = { qty: b.qty, unit: b.unit };
+    const ing = byId('ingredients', it.ingredientId) || {}, rows = larderRows(it.ingredientId, b.unit);
+    const loc = ing.location || (rows[0] ? locOf(rows[0]) : '');
+    pantryAdd(it.ingredientId, b.qty, b.unit, loc);
+    it.pantryAdded = { qty: b.qty, unit: b.unit, location: loc };
   }
   function larderOut(it) {
-    if (it.pantryAdded && it.ingredientId) pantryTake(it.ingredientId, it.pantryAdded.qty, it.pantryAdded.unit);
+    if (it.pantryAdded && it.ingredientId) pantryTake(it.ingredientId, it.pantryAdded.qty, it.pantryAdded.unit, it.pantryAdded.location);
     delete it.pantryAdded;
   }
   // Store/aisle/local follow the ingredient, so fixing an ingredient fixes every list.
@@ -364,33 +366,43 @@
 
   // ---------- larder ----------
   // "Larder" on screen; stored as pantryItems (the data name predates the rename, and Claude, the tablet
-  // and exports all use it). One row per ingredient and base unit, with a location (Fridge, Pantry Shelf 2…).
-  const larderRows = (ingredientId, unit) => S.pantryItems.filter(x => x.ingredientId === ingredientId && norm(1, x.unit).unit === norm(1, unit).unit);
+  // and exports all use it). One row per ingredient, base unit and location, so the same thing can be in two
+  // places (5 cans in the Fridge, 30 on Pantry Ground). Using stock takes from the fridge first, then elsewhere.
+  const larderRows = (ingredientId, unit) => S.pantryItems.filter(x => x.ingredientId === ingredientId && norm(1, x.unit).unit === norm(1, unit).unit)
+    .sort((a, b) => isFridge(locOf(b)) - isFridge(locOf(a)));
   const larderQty = (ingredientId, baseUnit) => S.pantryItems.filter(x => x.ingredientId === ingredientId && norm(1, x.unit).unit === baseUnit)
     .reduce((t, x) => t + norm(Number(x.qty) || 0, x.unit).qty, 0);
-  function pantryAdd(ingredientId, qty, unit) {
-    const p = larderRows(ingredientId, unit)[0];
+  // Adds stock to a location: the one given, else the ingredient's usual spot, else wherever it already is.
+  function pantryAdd(ingredientId, qty, unit, location) {
+    const ing = byId('ingredients', ingredientId) || {}, rows = larderRows(ingredientId, unit);
+    const loc = location != null ? location : (ing.location || (rows[0] ? locOf(rows[0]) : ''));
+    const p = rows.find(x => locOf(x) === loc);
     if (p) { p.qty = round(Math.max(0, (Number(p.qty) || 0) + norm(qty, unit).qty / norm(1, p.unit).qty), 3); put('pantryItems', p); }
-    else if (qty > 0) { const ing = byId('ingredients', ingredientId) || {}; put('pantryItems', { ingredientId, qty: round(qty, 3), unit, location: ing.location || '' }); }
+    else if (qty > 0) put('pantryItems', { ingredientId, qty: round(qty, 3), unit, location: loc });
   }
-  // Takes up to qty out (never below zero); returns what was actually taken, in base units, so it can go back exactly.
-  function pantryTake(ingredientId, qty, unit) {
-    const want = norm(Number(qty) || 0, unit);
-    let left = want.qty, taken = 0;
-    for (const p of larderRows(ingredientId, unit)) {
+  // Takes up to qty out (never below zero), from `prefer` first if given, then fridge first. Returns what was
+  // taken from each place, in base units, so Undo can put it back exactly where it came from.
+  function pantryTake(ingredientId, qty, unit, prefer) {
+    const want = norm(Number(qty) || 0, unit), out = [];
+    let left = want.qty;
+    const rows = larderRows(ingredientId, unit);
+    if (prefer != null) rows.sort((a, b) => (locOf(b) === prefer) - (locOf(a) === prefer));
+    for (const p of rows) {
       const per = norm(1, p.unit).qty, have = (Number(p.qty) || 0) * per, t = Math.min(have, left);
       if (!(t > 0)) continue;
       p.qty = round((have - t) / per, 3); put('pantryItems', p);
-      left -= t; taken += t;
+      left -= t;
+      out.push({ ingredientId, qty: round(t, 3), unit: want.unit, location: locOf(p) });
     }
-    return taken > 0 ? { ingredientId, qty: round(taken, 3), unit: want.unit } : null;
+    return out;
   }
   function drawRecipe(recipeId, factor) {
     const r = byId('recipes', recipeId);
     if (!r || !(factor > 0)) return [];
-    return r.ingredients.map(x => pantryTake(x.ingredientId, (Number(x.qty) || 0) * factor, x.unit)).filter(Boolean);
+    return r.ingredients.flatMap(x => pantryTake(x.ingredientId, (Number(x.qty) || 0) * factor, x.unit));
   }
-  const returnUsed = log => (log.pantryUsed || []).forEach(u => pantryAdd(u.ingredientId, u.qty, u.unit));
+  // Older records have no location: those go back to the ingredient's usual spot.
+  const returnUsed = log => (log.pantryUsed || []).forEach(u => pantryAdd(u.ingredientId, u.qty, u.unit, isStr(u.location) ? u.location : undefined));
 
   // ---------- prepared meals (cooked portions in the Larder) ----------
   // A Larder row with recipeId (and no ingredientId) holds cooked portions: qty = portions, unit 'portion',
@@ -669,6 +681,7 @@
       for (const k of ['packs', 'buyQty', 'boughtQty', 'needGross', 'larderQty']) if (r[k] != null && !(Number(r[k]) >= 0)) delete r[k];
       for (const k of ['buyUnit', 'boughtUnit']) if (r[k] != null && !isStr(r[k])) delete r[k];
       if (r.pantryAdded != null && !(isObj(r.pantryAdded) && Number(r.pantryAdded.qty) > 0 && isStr(r.pantryAdded.unit))) delete r.pantryAdded;
+      else if (r.pantryAdded && r.pantryAdded.location != null && !isStr(r.pantryAdded.location)) delete r.pantryAdded.location;
       return true;
     },
     pantryItems: r => {
@@ -1199,7 +1212,7 @@
       const pending = r && !slotLogs.length;
       // "Cooked & eaten" only when cooking leaves portions to put away; a single serve just says Eaten.
       const sl = day.slots[k] || {}, cookAmt = pending && r.kind === 'recipe' && !sl.cooked ? (alloc.slotCook[date + '|' + k] || 0) : 0;
-      const toCook = cookAmt > 0, batchCook = cookAmt > r.servings;
+      const toCook = cookAmt > 0, batchCook = toCook && cookAmt > r.servings;
       const larderNote = pending && r.recipe && !toCook && portionsOf(r.recipe.id) > 0 ? `${sl.cooked ? 'cooked · ' : ''}${portionsOf(r.recipe.id)} in the larder` : (sl.cooked ? 'cooked' : '');
       const total = (pending ? (r.protein || 0) : 0) + [...slotLogs, ...extras].reduce((t, l) => t + (l.proteinG || 0), 0);
       html += `<div class="card meal"><div class="card-head"><span class="slot-label">${SLOT_LABEL[k]}</span>
@@ -1350,7 +1363,7 @@
   }
 
   // ---------- Larder ----------
-  const locOf = p => p.location || (byId('ingredients', p.ingredientId) || {}).location || '';
+  function locOf(p) { return p.location || (byId('ingredients', p.ingredientId) || {}).location || ''; }
   function locationOrder() {
     const extra = new Set(S.pantryItems.map(locOf).filter(l => l && !settings.locations.includes(l)));
     return [...settings.locations, ...[...extra].sort(), ''];
@@ -1892,7 +1905,9 @@
       closeModal();
     },
     'save-log'() {
-      const m = ui.modal, n = Number(m.servings) || 1;
+      const m = ui.modal;
+      if (!m) return;
+      const n = Number(m.servings) || 1;
       let fields;
       if (m.mode === 'recipe') {
         const r = byId('recipes', m.recipeId);
@@ -2083,15 +2098,22 @@
     'add-pantry'() { openModal({ type: 'pantry', id: null, draft: { name: '', qty: null, unit: '', location: '' } }); },
     'save-pantry'() {
       const m = ui.modal, d = m.draft;
-      if (m.id) { const p = byId('pantryItems', m.id); Object.assign(p, { qty: d.qty || 0, unit: d.unit, location: d.location || '' }); put('pantryItems', p); return closeModal(); }
+      if (m.id) {
+        const p = byId('pantryItems', m.id), loc = d.location || '';
+        const same = S.pantryItems.find(x => x !== p && x.ingredientId === p.ingredientId && locOf(x) === loc && norm(1, x.unit).unit === norm(1, d.unit || p.unit).unit);
+        if (same && loc !== locOf(p)) {        // moved somewhere it already is: merge
+          same.qty = round((Number(same.qty) || 0) + norm(Number(d.qty) || 0, d.unit || p.unit).qty / norm(1, same.unit).qty, 3);
+          put('pantryItems', same); remove('pantryItems', p.id);
+        } else { Object.assign(p, { qty: d.qty || 0, unit: d.unit, location: loc }); put('pantryItems', p); }
+        return closeModal();
+      }
       const name = String(d.name || '').trim();
       if (!name) return toast('Which item?');
       let ing = ingByName(name);
       if (!ing) { ing = { name, defaultUnit: d.unit || 'each', store: settings.stores[settings.stores.length - 1] || '', aisle: '', isLocal: false, lastPrice: null }; put('ingredients', ing); }
       const unit = d.unit || ing.defaultUnit || 'each';
       if (d.location && !ing.location) { ing.location = d.location; put('ingredients', ing); }
-      if (larderRows(ing.id, unit).length) pantryAdd(ing.id, d.qty || 0, unit);
-      else put('pantryItems', { ingredientId: ing.id, qty: d.qty || 0, unit, location: d.location || ing.location || '' });
+      pantryAdd(ing.id, d.qty || 0, unit, d.location || ing.location || '');
       closeModal();
     },
     'delete-pantry'() { remove('pantryItems', ui.modal.id); closeModal(); },
