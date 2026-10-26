@@ -124,3 +124,6 @@ The `training` column uses Lift Log's session types (`lift`, `walk`, `hiit`, `re
 - **App changes:** edit the files, bump `CACHE` in `sw.js` (e.g. `meal-planner-v3`), commit and push. The phone picks up the new version the second time the app is opened.
 - **Data never goes in this repo.** It syncs to Drive, so `.gitignore` excludes `*.json` and `meal-planner-data/`. The data folders sit next to this one, not inside it.
 - **Testing on the PC:** run `python -m http.server 8766` in this folder and open `http://localhost:8766`. Drive sign-in only works from the GitHub Pages address.
+- **Automated tests:** with the same server running, open `http://localhost:8766/tests.html` and press **Run all tests** (or add `?auto`).
+  Each scenario runs the real app against its own test database with Google Drive faked, so real data is never touched.
+  Run it before every release; when a bug turns up, add a scenario for it in `tests/suite.js`.

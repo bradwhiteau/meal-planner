@@ -1,11 +1,15 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.3';
+  const APP_VERSION = '2.0.4';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
   // ---------- constants ----------
+  // Test mode (tests.html, on localhost only): its own database and storage keys and no service worker,
+  // so the test suite can never touch real data. It also exposes a few internals for the tests to read.
+  const TEST = /[?&]test=1(&|$)/.test(location.search) && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+  const DB_NAME = TEST ? 'meal-planner-test' : 'meal-planner', LS = TEST ? 'mpt.' : 'mp.';
   const STORES = ['ingredients', 'recipes', 'weekPlans', 'shoppingItems', 'pantryItems', 'mealLogs', 'settings'];
   const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'];
   const SLOT_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Snack' };
@@ -73,7 +77,7 @@
 
   function openDb() {
     return new Promise((res, rej) => {
-      const r = indexedDB.open('meal-planner', 1);
+      const r = indexedDB.open(DB_NAME, 1);
       r.onupgradeneeded = () => {
         for (const s of STORES) if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s, { keyPath: 'id' });
       };
@@ -552,13 +556,13 @@
     if (notifyState() !== 'granted') return;
     const today = todayStr(), now = Date.now();
     let sent = {};
-    try { sent = JSON.parse(localStorage.getItem('mp.notified') || '{}'); } catch (e) { /* ignore */ }
+    try { sent = JSON.parse(localStorage.getItem(LS + 'notified') || '{}'); } catch (e) { /* ignore */ }
     for (const r of remindersFor(today)) {
       const id = today + '|' + r.key;
       if (r.at <= now && now - r.at < 3 * 3600000 && !sent[id]) { sent[id] = 1; notify(r.text, id); }
     }
     for (const k of Object.keys(sent)) if (k.slice(0, 10) < addDays(today, -3)) delete sent[k];
-    try { localStorage.setItem('mp.notified', JSON.stringify(sent)); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(LS + 'notified', JSON.stringify(sent)); } catch (e) { /* ignore */ }
   }
   function notify(body, tag) {
     const opts = { body, tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png' };
@@ -802,8 +806,8 @@
   let outboxTimer = null;
 
   // Device-only sync state: folder IDs, applied/skipped files, outbox status.
-  function dget() { try { return JSON.parse(localStorage.getItem('mp.drive') || '{}'); } catch (e) { return {}; } }
-  function dset(patch) { const v = { ...dget(), ...patch }; try { localStorage.setItem('mp.drive', JSON.stringify(v)); } catch (e) { /* ignore */ } return v; }
+  function dget() { try { return JSON.parse(localStorage.getItem(LS + 'drive') || '{}'); } catch (e) { return {}; } }
+  function dset(patch) { const v = { ...dget(), ...patch }; try { localStorage.setItem(LS + 'drive', JSON.stringify(v)); } catch (e) { /* ignore */ } return v; }
   function remember(list, key) { const d = dget(); dset({ [list]: { ...(d[list] || {}), [key]: nowIso() } }); }
   // A view-only device (kitchen tablet, PC) mirrors the phone's latest.json and never writes to Drive.
   const isViewer = () => !!dget().viewer;
@@ -2417,7 +2421,7 @@
       $('#app').innerHTML = `<div class="card"><h2>Can't open storage</h2><p class="muted">${esc(e.message)}</p></div>`;
       return;
     }
-    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    if (!TEST && navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     render();
     renderDriveChip();
     // Google's sign-in script is only fetched once Drive has been set up on this device.
@@ -2426,6 +2430,14 @@
     setInterval(checkReminders, 30000);
     setInterval(renderDriveChip, 60000);
     setInterval(() => { if (isViewer() && !document.hidden) syncNow(); }, 5 * 60000);
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    if (!TEST && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    if (TEST) {
+      window.__mp = {
+        ready: true, ui, S, today: () => ui.today,
+        go(date) { ui.modal = null; ui.view = 'today'; ui.date = date; render(); },
+        week(weekStart) { ui.modal = null; ui.view = 'week'; ui.week = weekStart; render(); },
+        shop(weekStart) { ui.modal = null; ui.view = 'shop'; ui.shopWeek = weekStart; render(); },
+      };
+    }
   })();
 })();
