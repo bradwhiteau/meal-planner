@@ -300,3 +300,4 @@ body[data-view="today"] #app, body[data-view="shop"] .shop-row { touch-action: p
 .cook-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }
 .cook-row .stepper .qty { min-width: 2.5em; display: inline-block; text-align: center; }
 .prep li .btn.small { margin-left: 6px; min-height: 32px; padding: 4px 10px; }
+.meal-icon { margin-right: 6px; }

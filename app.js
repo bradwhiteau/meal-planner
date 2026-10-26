@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.0';
+  const APP_VERSION = '2.0.1';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1364,38 +1364,41 @@
       <button class="qty" data-action="edit-pantry" data-id="${p.id}">${esc(fmtQty(Number(p.qty) || 0, p.unit))}</button>
       <button class="edit-only" data-action="pantry-step" data-id="${p.id}" data-d="${step}" aria-label="More">+</button></span></div>`;
   }
+  // A prepared meal in its location: a 🍲 marks it as cooked food, with portions instead of a stepper.
+  function mealRow(x) {
+    const due = useByDue(x);
+    return `<div class="pantry-row portion ${due ? 'due' : ''}"><button class="grow larder-name" data-action="edit-portion" data-id="${x.id}">
+      <span class="meal-icon" aria-hidden="true">🍲</span>${esc((byId('recipes', x.recipeId) || {}).name || 'Meal')}
+      <span class="sub">${x.cookedOn ? `cooked ${fmtDate(x.cookedOn)}` : 'prepared meal'}${due ? ' · eat or freeze' : ''}</span></button>
+      <span class="portion-count">${x.qty} <small>portion${x.qty === 1 ? '' : 's'}</small></span></div>`;
+  }
   function renderPantry() {
     const byName = (a, b) => ingName(a.ingredientId).localeCompare(ingName(b.ingredientId));
     const ingRows = S.pantryItems.filter(p => !isPortion(p));
     const stocked = ingRows.filter(p => Number(p.qty) > 0), out = ingRows.filter(p => !(Number(p.qty) > 0)).sort(byName);
-    const meals = S.pantryItems.filter(p => isPortion(p) && Number(p.qty) > 0)
-      .sort((a, b) => (isFridge(b.location) - isFridge(a.location)) || String(a.cookedOn || '').localeCompare(String(b.cookedOn || '')));
+    const meals = S.pantryItems.filter(p => isPortion(p) && Number(p.qty) > 0);
+    const mealName = x => (byId('recipes', x.recipeId) || {}).name || '';
     let html = `<h1>Larder</h1>
       <div class="row edit-only"><button class="btn" data-action="baked">🍞 Baked sourdough</button><button class="btn" data-action="eggs">🥚 Collected eggs</button></div>
-      <p class="muted">What's here comes off the shopping list. Ticking a bought item adds it; cooking a meal takes its ingredients out.</p>
-      <section class="meals"><div class="store-head"><h2>Prepared meals</h2><span class="muted">${meals.reduce((t, x) => t + Number(x.qty), 0) || ''}</span></div>
-        ${meals.length ? `<div class="grid tight">${meals.map(x => {
-          const due = useByDue(x);
-          return `<div class="pantry-row portion ${due ? 'due' : ''}"><button class="grow larder-name" data-action="edit-portion" data-id="${x.id}">
-            ${esc((byId('recipes', x.recipeId) || {}).name || 'Meal')}<span class="sub">${esc(x.location || 'No location')}${x.cookedOn ? ` · cooked ${fmtDate(x.cookedOn)}` : ''}${due ? ' · eat or freeze' : ''}</span></button>
-            <span class="portion-count">${x.qty} <small>portion${x.qty === 1 ? '' : 's'}</small></span></div>`;
-        }).join('')}</div>` : '<p class="muted">None yet. Batch cooks land here when you tap Cooked.</p>'}
-        <button class="btn small edit-only" data-action="add-portion">+ Add a prepared meal</button></section>
+      <p class="muted">What's here comes off the shopping list. Ticking a bought item adds it; cooking a meal takes its ingredients out. 🍲 = prepared meals.</p>
       <div class="grid stores">`;
+    // Each location lists its prepared meals first (oldest first), then ingredients A–Z.
     for (const loc of locationOrder()) {
+      const here = meals.filter(x => (x.location || '') === loc)
+        .sort((a, b) => String(a.cookedOn || '').localeCompare(String(b.cookedOn || '')) || mealName(a).localeCompare(mealName(b)));
       const rows = stocked.filter(p => locOf(p) === loc).sort(byName);
-      if (!rows.length) continue;
-      html += `<section><div class="store-head"><h2>${esc(loc || 'No location')}</h2><span class="muted">${rows.length}</span></div>
-        <div class="larder-list">${rows.map(larderRow).join('')}</div></section>`;
+      if (!rows.length && !here.length) continue;
+      html += `<section><div class="store-head"><h2>${esc(loc || 'No location')}</h2><span class="muted">${here.length + rows.length}</span></div>
+        <div class="larder-list">${here.map(mealRow).join('')}${rows.map(larderRow).join('')}</div></section>`;
     }
     html += '</div>';
-    if (!stocked.length) html += `<div class="card empty"><p>The larder's empty.</p><p class="muted">Tick items on the shopping list as you buy them, or add what you already have.</p></div>`;
+    if (!stocked.length && !meals.length) html += `<div class="card empty"><p>The larder's empty.</p><p class="muted">Tick items on the shopping list as you buy them, or add what you already have.</p></div>`;
     if (out.length) {
       html += `<details class="run-out"><summary>Run out (${out.length})</summary>
         <p class="muted">Tap one to restock or remove it. Remove anything you won't buy again.</p>
         <div class="grid tight">${out.map(larderRow).join('')}</div></details>`;
     }
-    return html + `<button class="btn wide edit-only" data-action="add-pantry">+ Add to larder</button>`;
+    return html + `<div class="row edit-only"><button class="btn" data-action="add-pantry">+ Add to larder</button><button class="btn" data-action="add-portion">🍲 + Prepared meal</button></div>`;
   }
 
   // ---------- Recipes ----------

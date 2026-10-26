@@ -105,8 +105,8 @@ Rice bowl (500 g rice, cooked Mon, leftovers Tue), Big rice next week (1.2 kg), 
 ### As built
 
 - **Prepared meals** are `pantryItems` rows with `recipeId` (no `ingredientId`): `qty` = portions, `unit: 'portion'`,
-  `location`, `cookedOn`. One row per recipe, location and cook date; eaten down to 0 → removed. Larder → **Prepared meals**
-  section at the top, with **+ Add a prepared meal** for meals already put away.
+  `location`, `cookedOn`. One row per recipe, location and cook date; eaten down to 0 → removed. Larder lists them in
+  their location (🍲, first in each location, oldest first; 2.0.1), with **🍲 + Prepared meal** for meals already put away.
 - **Eaten on a cook slot** that still needs cooking cooks it: if the cook leaves spare portions the button reads
   **Cooked & eaten** and a sheet asks where they went (Portions made, Eaten now, a stepper per fridge/freezer location;
   suggestion: next 3 days' meals of that recipe → Fridge, rest → Freezer). Single serves (oats) keep **Eaten** and skip the sheet.
