@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.2';
+  const APP_VERSION = '2.0.3';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1373,9 +1373,9 @@
     const when = p.updatedAt ? fmtDate(ymd(new Date(p.updatedAt))) : '';
     return `<div class="pantry-row ${Number(p.qty) > 0 ? '' : 'out'}"><button class="grow larder-name" data-action="edit-pantry" data-id="${p.id}">
         ${esc(ingName(p.ingredientId))}${when ? `<span class="sub">changed ${when}</span>` : ''}</button>
-      <span class="stepper"><button class="edit-only" data-action="pantry-step" data-id="${p.id}" data-d="${-step}" aria-label="Less">−</button>
-      <button class="qty" data-action="edit-pantry" data-id="${p.id}">${esc(fmtQty(Number(p.qty) || 0, p.unit))}</button>
-      <button class="edit-only" data-action="pantry-step" data-id="${p.id}" data-d="${step}" aria-label="More">+</button></span></div>`;
+      <span class="stepper stacked"><button class="qty" data-action="edit-pantry" data-id="${p.id}">${esc(fmtQty(Number(p.qty) || 0, p.unit))}</button>
+      <button class="edit-only plus" data-action="pantry-step" data-id="${p.id}" data-d="${step}" aria-label="More">+</button>
+      <button class="edit-only minus" data-action="pantry-step" data-id="${p.id}" data-d="${-step}" aria-label="Less">−</button></span></div>`;
   }
   // A prepared meal in its location: a 🍲 marks it as cooked food, with portions instead of a stepper.
   function mealRow(x) {
