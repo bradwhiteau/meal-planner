@@ -240,6 +240,10 @@
     await c.click('[data-action="save-cook"]', 200);
     await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
     t.eq('Next week: 1.5 kg in the larder covers 1.2 kg', c.shopText('Jasmine rice'), '(no line)');
+    await c.tab('pantry'); await c.click('[data-action="add-pantry"]');
+    await c.set('#modal [data-m="draft.name"]', 'Jasmine rice'); await sleep(60);
+    t.eq('Weighed items offer g and kg', [...c.$('#modal [data-m="draft.unit"]').options].map(o => o.textContent), ['g', 'kg']);
+    await c.click('[data-action="close-modal"]');
     await c.importJson(patch({ ingredients: [mk('junk', { name: 'Junk test', defaultUnit: 'g', store: 'Supermarket', aisle: '', packQty: 'lots', packUnit: 5, packPrice: -3 })] }));
     const j = (await c.all('ingredients')).find(i => i.id === 'junk');
     t.eq('Junk pack fields dropped, record kept', j ? [j.packQty, j.packUnit, j.packPrice].map(v => v === undefined ? 'dropped' : v) : 'rejected', ['dropped', 'dropped', 'dropped']);
@@ -370,6 +374,16 @@
     await c.set('#modal [data-m="draft.location"]', 'Pantry Ground');
     await c.click('[data-action="save-pantry"]', 150);
     t.eq('Moving the fridge row onto Pantry Ground merges them', await c.larder(), ['pepsi:35each@Pantry Ground']);
+    await c.click('[data-action="add-pantry"]');
+    await c.set('#modal [data-m="draft.name"]', 'Pepsi Max (375 mL can)'); await sleep(60);
+    const unitEl = c.$('#modal [data-m="draft.unit"]');
+    t.eq('Larder unit is a dropdown offering only units that match (each)', [unitEl.tagName, [...unitEl.options].map(o => o.textContent)], ['SELECT', ['each']]);
+    await c.click('[data-action="close-modal"]');
+    await c.importJson(patch({ pantryItems: [mk('odd', { ingredientId: 'pepsi', qty: 3, unit: 'cans', location: 'Fridge' })] }));
+    await c.tab('pantry');
+    await c.click(c.loc('Fridge').querySelector('[data-action="edit-pantry"][data-id="odd"]'));
+    t.eq('An odd unit already set is kept but labelled', [...c.$('#modal [data-m="draft.unit"]').options].map(o => o.textContent), ['each', "cans (doesn't match recipes)"]);
+    await c.click('[data-action="close-modal"]');
   });
 
   scenario('A meal card holding only extra food (crash fixed in 2.0.2)', async (c, t) => {

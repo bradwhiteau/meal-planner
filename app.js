@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.1.1';
+  const APP_VERSION = '2.1.2';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1248,6 +1248,25 @@
     return `<div class="field"><span>Recipe</span>${inner}</div>`;
   }
   const ingDatalist = () => `<datalist id="ing-names">${sortByName(S.ingredients).map(i => `<option value="${esc(i.name)}">`).join('')}</datalist>`;
+  // Units that work for an ingredient: the ones its recipes, pack and usual unit use (with g/kg or ml/L both offered
+  // for weighed or measured things). A new item gets a standard list. A unit already set that doesn't match is kept,
+  // labelled, so it can be fixed rather than silently changed.
+  const STANDARD_UNITS = ['g', 'kg', 'ml', 'L', 'each', 'tin', 'pack', 'bunch', 'loaf', 'bottle', 'tub', 'bag'];
+  function unitChoices(ing) {
+    if (!ing) return [...STANDARD_UNITS];
+    const used = new Set([ing.defaultUnit, ing.packUnit].filter(Boolean));
+    S.recipes.forEach(r => r.ingredients.forEach(x => { if (x.ingredientId === ing.id && x.unit) used.add(x.unit); }));
+    if (!used.size) return [...STANDARD_UNITS];
+    const bases = new Set([...used].map(u => norm(1, u).unit));
+    if (bases.has('g')) { used.add('g'); used.add('kg'); }
+    if (bases.has('ml')) { used.add('ml'); used.add('L'); }
+    return [...used];
+  }
+  function unitSelect(m, ing, cur) {
+    const ok = unitChoices(ing), fits = u => ok.some(x => norm(1, x).unit === norm(1, u).unit);
+    const opts = cur && !ok.includes(cur) ? [...ok, cur] : ok;
+    return `<select data-m="${m}">${opts.map(u => `<option value="${esc(u)}" ${u === cur ? 'selected' : ''}>${esc(u)}${fits(u) ? '' : " (doesn't match recipes)"}</option>`).join('')}</select>`;
+  }
   const locationSelect = (m, cur) => `<select data-m="${m}"><option value="">—</option>${[...new Set([...settings.locations, cur].filter(Boolean))].map(l => `<option ${l === cur ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   const storeSelect = (m, cur) => `<select data-m="${m}">${[...new Set([...settings.stores, cur].filter(Boolean))].map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
   // A bare number (or number + letter) reads as "Aisle 13"; named aisles show as they are.
@@ -1806,7 +1825,7 @@
         <div class="row">${field('Pack size', `<input type="number" inputmode="decimal" data-m="draft.packQty" data-type="num" value="${esc(d.packQty == null ? '' : d.packQty)}" placeholder="e.g. 1">`)}
           ${field('Pack unit', `<input type="text" data-m="draft.packUnit" value="${esc(d.packUnit || '')}" placeholder="kg">`)}</div>
         <div class="row">${field('Bought', `<input type="number" inputmode="decimal" data-m="draft.boughtQty" data-type="num" value="${esc(d.boughtQty == null ? '' : d.boughtQty)}">`)}
-          ${field('Unit', `<input type="text" data-m="draft.boughtUnit" value="${esc(d.boughtUnit || '')}">`)}
+          ${field('Unit', unitSelect('draft.boughtUnit', ing, d.boughtUnit || ''))}
           ${field('Price ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.price" data-type="num" value="${esc(d.price == null ? '' : d.price)}">`)}</div>
         <div class="row">${field('Store', storeSelect('draft.store', d.store))}
           ${field('Aisle', `<input type="text" list="aisles" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
@@ -1821,7 +1840,7 @@
       return `<h2>${m.id ? esc(ingName(d.ingredientId)) : 'Add to larder'}</h2>
         ${m.id ? '' : field('Item', `<input type="text" list="ing-names" data-m="draft.name" data-rerender value="${esc(d.name)}" placeholder="e.g. Rolled oats">`)}
         <div class="row">${field('Amount on hand', `<input type="number" inputmode="decimal" data-m="draft.qty" data-type="num" value="${esc(d.qty == null ? '' : d.qty)}">`)}
-          ${field('Unit', `<input type="text" data-m="draft.unit" value="${esc(d.unit)}">`)}</div>
+          ${field('Unit', unitSelect('draft.unit', m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || ''), d.unit))}</div>
         <div class="row">${field('Location', locationSelect('draft.location', d.location || ''))}</div>
         ${ingDatalist()}
         <div class="row"><button class="btn primary" data-action="save-pantry">Save</button>
@@ -1883,12 +1902,10 @@
       if (ing && !row.unit) { row.unit = ing.defaultUnit || ''; return true; }
     }
     if (m.type === 'pantry' && key === 'draft.name') {
-      const ing = ingByName(m.draft.name);
-      if (ing && (!m.draft.unit || !m.draft.location)) {
-        if (!m.draft.unit) m.draft.unit = ing.defaultUnit || '';
-        if (!m.draft.location) m.draft.location = ing.location || '';
-        return true;
-      }
+      const ing = ingByName(m.draft.name), ok = unitChoices(ing);
+      if (!ok.includes(m.draft.unit)) m.draft.unit = ing && ok.includes(ing.defaultUnit) ? ing.defaultUnit : ok[0];
+      if (ing && !m.draft.location) m.draft.location = ing.location || '';
+      return true;
     }
     if (m.type === 'ingredient' && key === 'draft.packQty') return true;
     return false;
@@ -2200,7 +2217,7 @@
       p.qty = Math.max(0, round((Number(p.qty) || 0) + Number(el.dataset.d), 2)); put('pantryItems', p); render();
     },
     'edit-pantry'(el) { const p = byId('pantryItems', el.dataset.id); openModal({ type: 'pantry', id: p.id, draft: { ...clone(p), location: locOf(p) } }); },
-    'add-pantry'() { openModal({ type: 'pantry', id: null, draft: { name: '', qty: null, unit: '', location: '' } }); },
+    'add-pantry'() { openModal({ type: 'pantry', id: null, draft: { name: '', qty: null, unit: STANDARD_UNITS[0], location: '' } }); },
     'save-pantry'() {
       const m = ui.modal, d = m.draft;
       if (m.id) {
