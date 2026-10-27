@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.1.2';
+  const APP_VERSION = '2.2.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -946,18 +946,33 @@
   // and don't touch meal logs (Brad's record of what he ate). Full exports, deletes and log edits still wait for Apply.
   const isAutoPatch = item => !item.error && item.inc && item.inc.kind === 'patch' && !isQuickAdd(item)
     && !Object.keys(item.inc.dels).length && !item.inc.ups.mealLogs && item.plan && item.plan.changes > 0;
+  // Since 2.2.0: food Brad tells Claude about (e.g. a photo of a nutrition label) applies without asking, as long as
+  // the patch only ADDS new "also had" entries (extra, not planned) with a sensible protein figure. Changing or
+  // deleting an existing entry still waits for Apply.
+  const isFoodAdd = item => !item.error && item.inc && item.inc.kind === 'patch' && !Object.keys(item.inc.dels).length
+    && Object.keys(item.inc.ups).length === 1 && Array.isArray(item.inc.ups.mealLogs)
+    && item.inc.ups.mealLogs.length > 0 && item.inc.ups.mealLogs.length <= 5
+    && item.inc.ups.mealLogs.every(r => !byId('mealLogs', r.id) && r.extra === true && !r.planned && !r.skipped
+      && SLOTS.includes(r.slot) && (isStr(r.text) && r.text.trim() || isStr(r.recipeId))
+      && Number.isFinite(Number(r.proteinG)) && Number(r.proteinG) >= 0 && Number(r.proteinG) <= 200
+      && !r.pantryUsed && !r.portionsUsed && !r.cookedSlot);
   async function autoApplyQuickAdds() {
     const quick = drive.pending.filter(isQuickAdd), names = [];
     for (const item of quick) {
       await applyInboxItem(item);
       item.inc.ups.shoppingItems.forEach(r => r.text && names.push(r.text));
     }
+    const foods = [];
+    for (const item of drive.pending.filter(isFoodAdd)) {
+      await applyInboxItem(item);
+      item.inc.ups.mealLogs.forEach(r => foods.push(`${r.text || (byId('recipes', r.recipeId) || {}).name || 'food'} (${Math.round(Number(r.proteinG))} g protein)`));
+    }
     const notes = [];
     for (const item of drive.pending.filter(isAutoPatch)) {
       await applyInboxItem(item);
       notes.push(item.inc.note || item.plan.summary);
     }
-    return { names, notes };
+    return { names, notes, foods };
   }
 
   // Creates or overwrites a file in a folder; returns its id. JSON by default; { doc: true } uploads HTML that
@@ -1151,17 +1166,18 @@
     }
     if (nowDocDue()) dset({ dirty: true });
     drive.busy = true; renderDriveChip();
-    let added = [], updated = [];
+    let added = [], updated = [], logged = [];
     try {
       await checkInbox();
-      ({ names: added, notes: updated } = await autoApplyQuickAdds());
+      ({ names: added, notes: updated, foods: logged } = await autoApplyQuickAdds());
       drive.error = '';
     } catch (e) { drive.error = 'Checking inbox: ' + e.message; }
     finally { drive.busy = false; }
     await flushOutbox();
     renderDriveChip();
-    if (added.length || updated.length) {
+    if (added.length || updated.length || logged.length) {
       const msgs = [];
+      if (logged.length) msgs.push(`Logged from Claude: ${logged.join(', ')}`);
       if (updated.length) msgs.push(updated.length === 1 ? `Updated from Claude: ${updated[0]}` : `${updated.length} updates from Claude applied: ${updated.join('; ')}`);
       if (added.length) msgs.push(`Added to shopping list: ${added.join(', ')}`);
       toast(msgs.join(' · '), 7000);

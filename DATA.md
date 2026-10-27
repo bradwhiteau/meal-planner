@@ -106,7 +106,7 @@ Rules:
 6. **`patchId` must be unique** (a new UUID per file). The app applies each patchId once; re-sending the same patchId does nothing.
 7. **Deletes** list ids per store and remove only those records. You can't delete settings.
 8. Don't write `shoppingItems` (the app regenerates them) or `mealLogs` (that's Brad's record of what he ate),
-   unless he asks you to correct one.
+   unless he asks you to correct one, or to log something he ate (see "Logging food" below).
    **Larder amounts** (`pantryItems.qty`, including prepared-meal portions) change constantly on the phone as things are bought,
    cooked and eaten; only change them when Brad asks. Pack sizes, pack prices and locations on ingredients are fine to set or correct at any time.
 9. Name the file `patch-YYYY-MM-DD-short-description.json`; one change set per file. Keep it under 5 MB.
@@ -129,5 +129,23 @@ This is the one exception to rule 8.
 is applied automatically at the next inbox check, and the app shows its `note` in a toast ("Updated from Claude: …").
 So write a short, clear `note`: it's what Brad sees. Rule 3 still decides what actually changes.
 
-**Still Brad's choice:** patches with deletes, patches that change `mealLogs`, and full exports. The app shows each file's `note`
+**Logging food Brad tells you about (since 2.2.0).** When Brad sends a photo of a nutrition label, or says he ate something
+that isn't in the plan, write a patch whose only change is `upserts.mealLogs` with one new entry (up to 5 if he had several things):
+
+```json
+{ "id": "<new UUID>", "createdAt": "<now>", "updatedAt": "<now>", "date": "<his date in Australia/Perth, YYYY-MM-DD>",
+  "slot": "snack", "recipeId": null, "text": "Chobani protein yoghurt (170 g tub)", "servings": 1, "proteinG": 15,
+  "planned": false, "extra": true }
+```
+
+- **Protein is for what he actually had:** per serve × serves eaten, or per 100 g (or 100 mL) × amount ÷ 100, rounded to whole grams.
+  Australian labels show both columns; check which one you're using. If the amount isn't clear, ask before writing.
+- **slot:** the meal he names; otherwise by the time he ate it (before 10 am breakfast, before 3 pm lunch, before 7 pm dinner, else snack).
+- **text:** the product and amount, as he'd recognise it. `note`: e.g. "Logged from a photo: Chobani protein yoghurt, 15 g protein".
+- It applies automatically at the next inbox check (he sees "Logged from Claude: …"). It doesn't touch the Larder.
+- Only **new** entries with `extra: true` and 0–200 g protein apply on their own. Replacing a planned meal (`extra: false`),
+  editing or deleting an existing entry still waits for Brad's Apply.
+- If he'd like it as a recipe for next time, that's a separate recipe patch (new recipe with `proteinPerServingG`), which also applies on its own.
+
+**Still Brad's choice:** patches with deletes, patches that change existing `mealLogs` or swap a planned meal, and full exports. The app shows each file's `note`
 and a summary ("1 recipe updated, 1 week plan new") with Apply and Skip.

@@ -437,6 +437,9 @@
       { parent: INBOX, name: 'patch-quick-add.json', text: patch({ shoppingItems: [mk('q1', { weekStart: day(0), text: 'Kitty litter', manual: true, checked: false, qty: 1, unit: 'bag' })] }, { note: 'Add kitty litter' }) },
       { parent: INBOX, name: 'patch-delete.json', text: patch({}, { deletes: { recipes: ['r2'] }, note: 'Remove the old recipe' }) },
       { parent: INBOX, name: 'bad.json', text: { app: 'meal-planner', schemaVersion: 1, kind: 'patch', patchId: 'bad', upserts: { users: [] } } },
+      { parent: INBOX, name: 'patch-food-photo.json', text: patch({ mealLogs: [mk('food1', { date: c.w.__mp.today(), slot: 'snack', recipeId: null, text: 'Protein yoghurt (170 g tub)', servings: 1, proteinG: 15, planned: false, extra: true })] }, { note: 'Logged from a photo' }) },
+      { parent: INBOX, name: 'patch-food-swap.json', text: patch({ mealLogs: [mk('food2', { date: c.w.__mp.today(), slot: 'lunch', recipeId: null, text: 'Sushi instead', servings: 1, proteinG: 20, planned: false, extra: false })] }, { note: 'Had sushi instead of lunch' }) },
+      { parent: INBOX, name: 'patch-food-typo.json', text: patch({ mealLogs: [mk('food3', { date: c.w.__mp.today(), slot: 'snack', recipeId: null, text: 'Typo bar', servings: 1, proteinG: 900, planned: false, extra: true })] }, { note: 'Typo protein' }) },
     ]);
     await c.settings();
     await c.set('[data-drive="inboxId"]', INBOX);
@@ -452,6 +455,10 @@
     t.lacks('…but not older, finished lists', doc(), 'Bought a fortnight ago');
     t.eq('Recipe patch applied without asking', (await c.all('recipes')).find(r => r.id === 'r1').proteinPerServingG, 38);
     t.ok('Quick shopping add applied without asking', (await c.all('shoppingItems')).some(i => i.text === 'Kitty litter'));
+    const logs = await c.all('mealLogs');
+    t.ok('Food logged by Claude (e.g. from a label photo) applied without asking', logs.some(l => l.id === 'food1' && l.proteinG === 15));
+    t.ok('A swap of a planned meal still waits for Apply', !logs.some(l => l.id === 'food2') && c.modalText().includes('Had sushi instead of lunch'));
+    t.ok('An implausible protein figure still waits for Apply', !logs.some(l => l.id === 'food3') && c.modalText().includes('Typo protein'));
     const inbox = c.modalText();
     t.has('The delete waits for review', inbox, 'Remove the old recipe');
     t.has('The bad file is shown with the reason', inbox, 'Unknown store');
@@ -460,6 +467,7 @@
     await c.click(cards.find(x => x.innerText.includes('Remove the old recipe')).querySelector('[data-action="inbox-apply"]'), 200);
     t.ok('Apply ran the delete', !(await c.all('recipes')).some(r => r.id === 'r2'));
     await c.click(c.$$('#modal .card').find(x => x.innerText.includes('bad.json')).querySelector('[data-action="inbox-skip"]'), 120);
+    while (c.$('#modal [data-action="inbox-skip"]')) await c.click('#modal [data-action="inbox-skip"]', 100);
     t.ok('Inbox empty after Apply and Skip', c.$('#modal').hidden || !c.$('#modal .card'));
     await c.settings();
     await c.click('[data-action="drive-sync"]', 1200);
