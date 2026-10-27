@@ -20,6 +20,10 @@ so older exports, the tablet and patches keep working.
   (and when the app goes to the background). It's only as fresh as the last time the app was open and signed in to Google:
   check `exportedAt`.
 - `outbox/meal-planner-YYYY-MM-DD.json` holds one snapshot per day; the last 14 days are kept.
+- `outbox/Meal Planner Now` is a **Google Doc** the app rewrites with every save: the next 8 days of meals by date (what's been
+  eaten, swapped or skipped), protein so far, prep reminders, the shopping list by store and aisle (unbought items; last week's
+  too while anything on it is unbought), and the Larder (prepared meals, stock by location, run out). It's plain English for
+  quick questions in chat and voice, where the Drive connector can't read JSON. For changes, still read latest.json and write a patch.
 - Only the phone (the app's "Main phone" device) writes the outbox. View-only devices (kitchen tablet, PC) just read latest.json.
 
 A full export looks like this:

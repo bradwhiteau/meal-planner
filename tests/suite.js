@@ -414,7 +414,9 @@
 
   scenario('Drive mailbox: inbox auto-apply and review, outbox writes', async (c, t) => {
     await c.importJson(patch({ recipes: [mk('r1', { name: 'Curry', servings: 4, proteinPerServingG: null, lactose: 'none', tags: [], method: '', ingredients: [] }),
-      mk('r2', { name: 'Old recipe', servings: 1, proteinPerServingG: 10, lactose: 'none', tags: [], method: '', ingredients: [] })] }));
+      mk('r2', { name: 'Old recipe', servings: 1, proteinPerServingG: 10, lactose: 'none', tags: [], method: '', ingredients: [] })],
+      shoppingItems: [mk('lw1', { weekStart: day(-7), text: 'Still to buy from last week', manual: true, checked: false }),
+        mk('lw2', { weekStart: day(-14), text: 'Bought a fortnight ago', manual: true, checked: true })] }));
     const later = new Date(Date.now() + 60000).toISOString();
     const fs = fakeDrive(c, [
       { parent: INBOX, name: 'patch-protein.json', text: patch({ recipes: [mk('r1', { name: 'Curry', servings: 4, proteinPerServingG: 38, lactose: 'none', tags: [], method: '', ingredients: [], updatedAt: later })] }, { note: 'Protein for the curry', author: 'claude' }) },
@@ -428,6 +430,12 @@
     await c.click('[data-action="drive-test"]', 1500);
     t.ok('latest.json written to the outbox', fs.json('latest.json') && fs.json('latest.json').app === 'meal-planner');
     t.ok("Today's snapshot written", fs.find(`meal-planner-${c.w.__mp.today()}.json`));
+    const doc = () => (fs.find('Meal Planner Now') || {}).text || '';
+    t.ok('"Meal Planner Now" Google Doc written for Claude to read', doc().includes('<h1>Meal Planner Now</h1>'));
+    t.has('…with the shopping list', doc(), 'Kitty litter');
+    t.has('…and the days by date', doc(), 'Meals by day');
+    t.has("…and last week's list while it still has unbought items", doc(), 'Still to buy from last week');
+    t.lacks('…but not older, finished lists', doc(), 'Bought a fortnight ago');
     t.eq('Recipe patch applied without asking', (await c.all('recipes')).find(r => r.id === 'r1').proteinPerServingG, 38);
     t.ok('Quick shopping add applied without asking', (await c.all('shoppingItems')).some(i => i.text === 'Kitty litter'));
     const inbox = c.modalText();
@@ -450,6 +458,8 @@
     await c.settings();
     await c.click('[data-action="drive-write"]', 800);
     t.ok('latest.json now includes the new meal', fs.json('latest.json').stores.mealLogs.some(l => l.text === 'Chicken wrap'));
+    t.has('"Meal Planner Now" updated with it too', doc(), 'Chicken wrap');
+    t.eq('Doc updated in place, not duplicated', Object.values(fs.files).filter(f => f.name === 'Meal Planner Now').length, 1);
     t.eq('No calls outside the fake Drive', fs.unexpected, []);
   });
 

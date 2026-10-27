@@ -78,6 +78,11 @@ The chip next to the menu shows the state:
 | **Drive ✓** | Up to date. |
 | **Drive ⚠** | Something failed; Settings shows the error. |
 
+**Asking Claude by chat or voice:** with every save the app also writes a Google Doc, **Meal Planner Now**, to the outbox:
+the next 8 days of meals, the shopping list by store, and the Larder, in plain English. Claude's Drive connector can read it
+(it can't read the JSON). Add a line to your Claude profile preferences pointing to it, e.g. *"For my meal plan, shopping list
+or larder, read the Google Doc 'Meal Planner Now'."*
+
 Applying a file never overwrites anything changed more recently on the phone, and the same file is never applied twice.
 Logging works offline as usual; the outbox catches up the next time the app is open, online and signed in.
 **Sign out** in Settings revokes the app's access.

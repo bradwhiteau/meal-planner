@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.6';
+  const APP_VERSION = '2.1.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -960,17 +960,19 @@
     return { names, notes };
   }
 
-  // Creates or overwrites a JSON file in a folder; returns its id.
-  async function saveDriveFile(folderId, name, text, id) {
+  // Creates or overwrites a file in a folder; returns its id. JSON by default; { doc: true } uploads HTML that
+  // Drive converts into a Google Doc (which the Drive connector in Claude's chat and voice can read).
+  async function saveDriveFile(folderId, name, text, id, opts = {}) {
+    const media = opts.doc ? 'text/html; charset=UTF-8' : 'application/json';
     if (id) {
       try {
-        const r = await api(`${DRIVE_UPLOAD}/files/${id}?uploadType=media&fields=id`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: text });
+        const r = await api(`${DRIVE_UPLOAD}/files/${id}?uploadType=media&fields=id`, { method: 'PATCH', headers: { 'Content-Type': media }, body: text });
         return (await r.json()).id;
       } catch (e) { if (e.status !== 403 && e.status !== 404) throw e; }   // not ours or gone: write a new one
     }
-    const b = 'mp-' + uuid();
-    const body = `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: [folderId], mimeType: 'application/json' })}\r\n`
-      + `--${b}\r\nContent-Type: application/json\r\n\r\n${text}\r\n--${b}--`;
+    const b = 'mp-' + uuid(), mimeType = opts.doc ? 'application/vnd.google-apps.document' : 'application/json';
+    const body = `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: [folderId], mimeType })}\r\n`
+      + `--${b}\r\nContent-Type: ${media}\r\n\r\n${text}\r\n--${b}--`;
     const r = await api(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id`, { method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${b}` }, body });
     return (await r.json()).id;
   }
@@ -989,6 +991,92 @@
       catch (e) { /* not ours to remove */ }
     }
     dset({ dirty: false, lastWrite: nowIso(), latestId });
+    // The plain-English summary. A failure here never holds up latest.json.
+    try { await saveDriveFile(d.outboxId, NOW_DOC, nowDocHtml(), (byName(NOW_DOC) || {}).id, { doc: true }); }
+    catch (e) { drive.error = `Saving "${NOW_DOC}": ${e.message}`; }
+  }
+
+  // ---------- "Meal Planner Now": a summary Claude can read anywhere ----------
+  // Claude's Drive connector (chat, phone, voice) can't read JSON, so alongside latest.json the app keeps one Google
+  // Doc in plain English: the next 8 days by date, this week's and next week's shopping lists by store, and the Larder.
+  const NOW_DOC = 'Meal Planner Now';
+  function nowDocHtml() {
+    const e = esc, today = todayStr(), at = new Date();
+    const zone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (x) { return ''; } })();
+    const time = at.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' });
+    const recipeName = id => (byId('recipes', id) || {}).name || 'a meal';
+    const out = ['<h1>Meal Planner Now</h1>',
+      `<p>Written by Brad's Meal and Shopping Planner app on ${e(fmtDate(today))} at ${e(time)}${zone ? ` (${e(zone)})` : ''}.
+        Days are listed by date, so work out "today" and "tomorrow" from the actual date. If this wasn't written today,
+        the app hasn't been opened since, so anything eaten or bought since then isn't shown.</p>`];
+
+    // Days: today and the next 7.
+    out.push('<h2>Meals by day</h2>');
+    for (let n = 0; n < 8; n++) {
+      const date = addDays(today, n), plan = planFor(mondayOf(date));
+      const i = plan ? plan.days.findIndex(x => x.date === date) : -1;
+      const logs = logsFor(date);
+      if (i < 0 && !logs.length) { out.push(`<h3>${e(fmtDate(date))}${n === 0 ? ' (the day this was written)' : ''}</h3><p>Nothing planned yet.</p>`); continue; }
+      const day = i >= 0 ? plan.days[i] : { training: '', slots: {} };
+      out.push(`<h3>${e(fmtDate(date))}${n === 0 ? ' (the day this was written)' : ''}${day.training ? ` · training: ${e(TRAINING[day.training] || day.training)}` : ''}</h3><ul>`);
+      for (const k of SLOTS) {
+        const r = i >= 0 ? resolveSlot(plan, i, k) : null, slotLogs = logs.filter(l => l.slot === k && !l.extra), extras = logs.filter(l => l.slot === k && l.extra);
+        if (!r && !slotLogs.length && !extras.length) continue;
+        let line = `<b>${SLOT_LABEL[k]}:</b> `;
+        if (r) {
+          line += e(r.label) + (r.kind === 'leftover' ? ' (leftovers)' : '') + (r.recipe && r.recipe.lactose === 'contains' ? ' (contains lactose)' : '');
+          if (r.protein != null) line += ` — ${Math.round(r.protein)} g protein`;
+        } else line += 'nothing planned';
+        const l = slotLogs[0];
+        if (l) line += l.skipped ? ' — skipped' : l.planned ? ' — eaten' : ` — had ${e(logLabel(l))} instead`;
+        if (extras.length) line += ` — also had ${extras.map(x => e(logLabel(x))).join(', ')}`;
+        out.push(`<li>${line}</li>`);
+      }
+      out.push('</ul>');
+      if (n === 0) {
+        const target = proteinTarget();
+        out.push(`<p>Protein logged so far that day: ${Math.round(proteinOn(date))} g${target ? ` of a ${target} g target` : ''}.</p>`);
+      }
+      const prep = remindersFor(date);
+      if (prep.length) out.push(`<p>Prep that day: ${prep.map(t => e(t.text)).join('; ')}.</p>`);
+    }
+
+    // Shopping: last week's list if anything on it is still unbought, then this week's and next week's;
+    // unticked items by store and aisle.
+    for (const week of [addDays(mondayOf(today), -7), mondayOf(today), addDays(mondayOf(today), 7)]) {
+      const items = S.shoppingItems.filter(x => x.weekStart === week);
+      if (!items.length || (week < mondayOf(today) && items.every(x => x.checked))) continue;
+      const left = items.filter(x => !x.checked);
+      out.push(`<h2>Shopping list, week of ${e(fmtDate(week))}</h2>
+        <p>${left.length} still to buy; ${items.length - left.length} already bought.</p>`);
+      for (const store of storeOrder()) {
+        const inStore = left.filter(x => itemInfo(x).store === store || (store === 'Other' && !storeOrder().slice(0, -1).includes(itemInfo(x).store)));
+        if (!inStore.length) continue;
+        out.push(`<h3>${e(store)}</h3><ul>`);
+        inStore.sort((a, b) => String(itemInfo(a).aisle).localeCompare(String(itemInfo(b).aisle), undefined, { numeric: true }) || itemInfo(a).name.localeCompare(itemInfo(b).name))
+          .forEach(x => {
+            const info = itemInfo(x);
+            const qty = x.packs > 0 && x.buyUnit ? `${x.packs} × ${fmtQty(round(x.buyQty / x.packs, 3), x.buyUnit)}` : fmtQty(x.qty, x.unit);
+            out.push(`<li>${e(info.name)}${qty ? ` — ${e(qty)}` : ''}${info.aisle ? ` (${e(aisleLabel(info.aisle))})` : ''}${info.isLocal ? ' (local)' : ''}</li>`);
+          });
+        out.push('</ul>');
+      }
+      if (!left.length) out.push('<p>Everything on this list has been bought.</p>');
+    }
+
+    // Larder: prepared meals first, then ingredients by location, then what's run out.
+    out.push('<h2>Larder (fridge, freezer and pantry)</h2>');
+    const meals = S.pantryItems.filter(x => isPortion(x) && Number(x.qty) > 0);
+    out.push(meals.length ? `<h3>Prepared meals</h3><ul>${meals.map(x => `<li>${e(recipeName(x.recipeId))} — ${x.qty} portion${x.qty === 1 ? '' : 's'}, ${e(x.location || 'no location')}${x.cookedOn ? `, cooked ${e(fmtDate(x.cookedOn))}` : ''}${useByDue(x) ? ' (eat or freeze soon)' : ''}</li>`).join('')}</ul>`
+      : '<p>No prepared meals.</p>');
+    const stocked = S.pantryItems.filter(x => !isPortion(x) && Number(x.qty) > 0);
+    for (const loc of locationOrder()) {
+      const rows = stocked.filter(x => locOf(x) === loc).sort((a, b) => ingName(a.ingredientId).localeCompare(ingName(b.ingredientId)));
+      if (rows.length) out.push(`<h3>${e(loc || 'No location')}</h3><p>${rows.map(x => `${e(ingName(x.ingredientId))} ${e(fmtQty(Number(x.qty), x.unit))}`).join('; ')}.</p>`);
+    }
+    const out0 = S.pantryItems.filter(x => !isPortion(x) && !(Number(x.qty) > 0)).map(x => ingName(x.ingredientId)).sort();
+    if (out0.length) out.push(`<h3>Run out</h3><p>${out0.map(e).join(', ')}.</p>`);
+    return `<html><head><meta charset="utf-8"></head><body>${out.join('\n')}</body></html>`;
   }
 
   // View-only: replace everything on this device with the phone's latest.json (skipped if it hasn't changed).
@@ -2440,7 +2528,7 @@
     if (!TEST && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
     if (TEST) {
       window.__mp = {
-        ready: true, ui, S, today: () => ui.today,
+        ready: true, ui, S, today: () => ui.today, nowDoc: () => nowDocHtml(),
         go(date) { ui.modal = null; ui.view = 'today'; ui.date = date; render(); },
         week(weekStart) { ui.modal = null; ui.view = 'week'; ui.week = weekStart; render(); },
         shop(weekStart) { ui.modal = null; ui.view = 'shop'; ui.shopWeek = weekStart; render(); },
