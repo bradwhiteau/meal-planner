@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.1.0';
+  const APP_VERSION = '2.1.1';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -992,8 +992,18 @@
     }
     dset({ dirty: false, lastWrite: nowIso(), latestId });
     // The plain-English summary. A failure here never holds up latest.json.
-    try { await saveDriveFile(d.outboxId, NOW_DOC, nowDocHtml(), (byName(NOW_DOC) || {}).id, { doc: true }); }
-    catch (e) { drive.error = `Saving "${NOW_DOC}": ${e.message}`; }
+    try {
+      await saveDriveFile(d.outboxId, NOW_DOC, nowDocHtml(), (byName(NOW_DOC) || {}).id, { doc: true });
+      dset({ nowDocVersion: APP_VERSION, nowDocAt: nowIso() });
+    } catch (e) { drive.error = `Saving "${NOW_DOC}": ${e.message}`; }
+  }
+
+  // "Meal Planner Now" is about today, so it's refreshed on the first open of a new day and after the app updates,
+  // even when nothing else has changed.
+  function nowDocDue() {
+    if (!driveReady() || isViewer()) return false;
+    const d = dget();
+    return d.nowDocVersion !== APP_VERSION || !d.nowDocAt || ymd(new Date(d.nowDocAt)) !== todayStr();
   }
 
   // ---------- "Meal Planner Now": a summary Claude can read anywhere ----------
@@ -1139,6 +1149,7 @@
       if (changed || ui.view === 'settings') { if (!ui.modal) render(); }
       return;
     }
+    if (nowDocDue()) dset({ dirty: true });
     drive.busy = true; renderDriveChip();
     let added = [], updated = [];
     try {
@@ -2501,6 +2512,7 @@
     checkReminders();
     if (!signedIn()) quietSignIn();
     else if (Date.now() - drive.lastCheck > 5 * 60000) syncNow();
+    else if (nowDocDue()) { dset({ dirty: true }); flushOutbox(); }
     renderDriveChip();
   });
   window.addEventListener('online', () => syncNow());

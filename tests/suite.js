@@ -460,6 +460,12 @@
     t.ok('latest.json now includes the new meal', fs.json('latest.json').stores.mealLogs.some(l => l.text === 'Chicken wrap'));
     t.has('"Meal Planner Now" updated with it too', doc(), 'Chicken wrap');
     t.eq('Doc updated in place, not duplicated', Object.values(fs.files).filter(f => f.name === 'Meal Planner Now').length, 1);
+    const ls = JSON.parse(c.w.localStorage.getItem('mpt.drive'));
+    ls.nowDocAt = new Date(Date.now() - 2 * 86400000).toISOString();
+    c.w.localStorage.setItem('mpt.drive', JSON.stringify(ls));
+    const before = fs.writes.length;
+    c.d.dispatchEvent(new c.w.Event('visibilitychange')); await sleep(900);
+    t.ok('First open on a new day refreshes the doc, with nothing else changed', fs.writes.slice(before).includes('update Meal Planner Now'), fs.writes.slice(before));
     t.eq('No calls outside the fake Drive', fs.unexpected, []);
   });
 
