@@ -333,6 +333,50 @@
     t.eq('Undo cooked: larder as before', await c.larder(), larderBefore);
   });
 
+  scenario('Tuna mornay: spares planned in an earlier week cover the next (2.2.1)', async (c, t) => {
+    await c.importJson(patch({
+      ingredients: [mk('tuna', { name: 'Tinned tuna', defaultUnit: 'tin', store: 'Supermarket', aisle: '5' }),
+        mk('mince2', { name: 'Beef mince', defaultUnit: 'g', store: 'Butcher', aisle: 'Meat' })],
+      recipes: [mk('morn', { name: 'Tuna mornay', servings: 2, proteinPerServingG: 40, lactose: 'contains', tags: [], method: '',
+        ingredients: [{ ingredientId: 'tuna', qty: 2, unit: 'tin' }] }),
+      mk('bol2', { name: 'Beef bolognese', servings: 6, proteinPerServingG: 45, lactose: 'none', tags: ['batch'], method: '',
+        ingredients: [{ ingredientId: 'mince2', qty: 1000, unit: 'g' }] })],
+      weekPlans: [weekPlan('w0', 0, {
+        5: { dinner: { recipeId: 'bol2', servings: 1, cook: null } },
+        6: { lunch: { leftoverOf: { day: 5, slot: 'dinner' }, servings: 1 }, dinner: { recipeId: 'morn', servings: 1, cook: 2 } } }),
+      weekPlan('w1', 1, {
+        0: { lunch: { recipeId: 'morn', servings: 1, cook: 1 }, dinner: { recipeId: 'bol2', servings: 1, cook: null } },
+        1: { dinner: { leftoverOf: { day: 0, slot: 'dinner' }, servings: 1 } },
+        2: { dinner: { leftoverOf: { day: 0, slot: 'dinner' }, servings: 1 } } })],
+    }));
+    const rows = () => c.$$('.slot-row').map(b => b.innerText.replace(/\s*\n\s*/g, ' ')).join(' / ');
+    const nextWeek = async label => {
+      await c.week(day(7));
+      const alloc = c.w.__mp.alloc(day(7)).slotCook;
+      t.eq(`${label}: next Monday's mornay and bolognese cook nothing`, [alloc[day(7) + '|lunch'], alloc[day(7) + '|dinner']], [0, 0]);
+      t.has(`${label}: Monday lunch reads "from the larder"`, rows(), 'from the larder');
+      await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
+      t.eq(`${label}: no tuna on next week's list`, c.shopText('Tinned tuna'), '(no line)');
+      t.eq(`${label}: no mince on next week's list`, c.shopText('Beef mince'), '(no line)');
+    };
+    await c.week(day(0)); await c.click('[data-action="generate"]', 300);
+    t.ok('This week buys the Sunday mornay and the Saturday batch', c.shopRow('Tinned tuna') && c.shopRow('Beef mince'));
+    await nextWeek('Before cooking');
+    // Cook both ahead (nothing eaten yet): the portions go into the Larder, and the plan must not count them twice.
+    for (const [d, slot] of [[5, 'dinner'], [6, 'dinner']]) {
+      await c.go(day(d));
+      await c.click(c.card(slot).querySelector('[data-action="meal-menu"]'), 60);
+      await c.click('[data-action="cook-ahead"]', 80);
+      await c.click('[data-action="save-cook"]', 200);
+    }
+    t.eq('Cooked ahead: 6 bolognese and 2 mornay in the Larder', (await c.larder()).filter(x => x.startsWith('🍲')).map(x => x.replace(/@.*/, '')).reduce((a, x) => {
+      const [, id, n] = x.match(/🍲(\w+)×(\d+)/); a[id] = (a[id] || 0) + Number(n); return a; }, {}), { bol2: 6, morn: 2 });
+    await nextWeek('After cooking');
+    // Still covered exactly: one fewer portion and next week's lunch has to cook again.
+    await c.importJson(patch({ pantryItems: (await c.all('pantryItems')).filter(p => p.recipeId === 'morn').map(p => ({ ...p, qty: p.qty - 1, updatedAt: new Date(Date.now() + 5000).toISOString() })) }));
+    t.eq('One mornay short: next Monday cooks 1 again', c.w.__mp.alloc(day(7)).slotCook[day(7) + '|lunch'], 1);
+  });
+
   scenario('Pepsi Max: one item in two places (2.0.2)', async (c, t) => {
     await c.importJson(patch({
       ingredients: [mk('pepsi', { name: 'Pepsi Max (375 mL can)', defaultUnit: 'each', store: 'Supermarket', aisle: '7', location: 'Pantry Ground' })],

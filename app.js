@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.2.0';
+  const APP_VERSION = '2.2.1';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -247,20 +247,23 @@
     }));
     return byRecipe;
   }
-  // Portions in the Larder not already promised to meals in earlier weeks (from this week on).
+  // Portions free for a week's meals: those in the Larder now, plus the spares earlier weeks (from this week on)
+  // still plan to cook, minus what those weeks eat. One forward pass, carrying the count week to week.
+  // A slot already marked cooked has no cook slot (its portions are in the Larder), so nothing is counted twice.
   function portionsFreeFor(week) {
     const free = new Map();
     S.pantryItems.filter(x => isPortion(x) && Number(x.qty) > 0).forEach(x => free.set(x.recipeId, (free.get(x.recipeId) || 0) + Number(x.qty)));
     for (let w = mondayOf(ui.today); w < week; w = addDays(w, 7)) {
-      weekMeals(w).forEach((m, rid) => free.set(rid, Math.max(0, (free.get(rid) || 0) - m.needed)));
+      allocWeek(w, free).byRecipe.forEach((m, rid) => free.set(rid, Math.max(0, round((free.get(rid) || 0) + m.cook - m.needed, 2))));
     }
     return free;
   }
   // How a week's meals are covered: per recipe, portions in the Larder cover meals first; batch recipes (tag
   // "batch") then cook the full batch whenever anything is uncovered, and the spare goes to the freezer; other
   // recipes cook only what the Larder doesn't cover.
-  function weekAlloc(week) {
-    const byRecipe = weekMeals(week), free = portionsFreeFor(week), slotCook = {};
+  function weekAlloc(week) { return allocWeek(week, portionsFreeFor(week)); }
+  function allocWeek(week, free) {
+    const byRecipe = weekMeals(week), slotCook = {};
     for (const m of byRecipe.values()) {
       m.covered = Math.min(free.get(m.recipe.id) || 0, m.needed);
       const batch = (m.recipe.tags || []).includes('batch');
@@ -2573,7 +2576,7 @@
     if (!TEST && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
     if (TEST) {
       window.__mp = {
-        ready: true, ui, S, today: () => ui.today, nowDoc: () => nowDocHtml(),
+        ready: true, ui, S, today: () => ui.today, nowDoc: () => nowDocHtml(), alloc: week => weekAlloc(week),
         go(date) { ui.modal = null; ui.view = 'today'; ui.date = date; render(); },
         week(weekStart) { ui.modal = null; ui.view = 'week'; ui.week = weekStart; render(); },
         shop(weekStart) { ui.modal = null; ui.view = 'shop'; ui.shopWeek = weekStart; render(); },

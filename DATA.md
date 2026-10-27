@@ -66,8 +66,8 @@ A recipe slot that has been cooked carries `cooked: {on, made, pantryUsed, porti
 ingredients taken from the Larder and the portions put away. Keep it unchanged when rewriting a week; it's what stops the
 list buying that cook's ingredients again. Copies of a week and templates never carry it.
 
-**Portions cover meals first.** For each recipe, portions in the Larder (not already needed by earlier weeks) cover that week's
-meals of it before anything is cooked. Recipes tagged `batch` then cook their full batch if anything is uncovered (the spare goes
+**Portions cover meals first.** For each recipe, portions in the Larder, plus the spare portions earlier weeks plan to cook
+but haven't yet (less what those weeks eat), cover that week's meals of it before anything is cooked. Recipes tagged `batch` then cook their full batch if anything is uncovered (the spare goes
 in the freezer); other recipes cook only what isn't covered. Prepared meals in latest.json are worth planning around.
 
 Units are metric: `g`, `kg`, `ml`, `L`, or a count (`each`, `tin`, `pack`, `bunch`, `loaf`). g/kg and ml/L are summed together on the shopping list.
