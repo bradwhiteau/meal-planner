@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.2.1';
+  const APP_VERSION = '2.3.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -177,6 +177,32 @@
     put('weekPlans', plan);
   }
 
+  // Later slots in the same week eating leftovers of this one.
+  function leftoverSlots(plan, dayIdx, key) {
+    const out = [];
+    plan.days.forEach((d, i) => SLOTS.forEach(k => {
+      const x = d.slots[k];
+      if (x && x.leftoverOf && x.leftoverOf.day === dayIdx && x.leftoverOf.slot === key) out.push({ day: i, slot: k, servings: x.servings || 1 });
+    }));
+    return out;
+  }
+  // What a cook slot makes when "Servings to cook" is left blank: this meal plus its leftovers in the plan.
+  // Batch recipes cook at least the whole recipe (the spare goes to the freezer).
+  function plannedCook(plan, dayIdx, key, recipe, servings) {
+    const planned = servings + leftoverSlots(plan, dayIdx, key).reduce((t, x) => t + x.servings, 0);
+    return (recipe.tags || []).includes('batch') ? Math.max(planned, recipe.servings || 1) : planned;
+  }
+  // The note under a meal that cooks more than it eats: where the rest goes.
+  function cookNote(r, amt) {
+    if (!r || r.kind !== 'recipe' || !(amt > r.servings)) return '';
+    const extra = round(amt - r.servings, 2), lefts = r.leftovers || [];
+    const want = lefts.reduce((t, x) => t + x.servings, 0), forLeft = Math.min(extra, want), spare = round(extra - forLeft, 2);
+    const parts = [`cook ${amt}`];
+    if (forLeft > 0) parts.push(`${forLeft} for leftovers${forLeft === want ? ' (' + lefts.map(x => `${WEEKDAY[x.day]} ${x.slot}`).join(', ') + ')' : ''}`);
+    if (spare > 0) parts.push(`${spare} spare for the larder`);
+    return parts.join(' · ');
+  }
+
   // What a slot means for display, logging and protein.
   function resolveSlot(plan, dayIdx, key) {
     const day = plan.days[dayIdx], s = day && day.slots[key];
@@ -194,11 +220,11 @@
     if (s.recipeId) {
       const r = byId('recipes', s.recipeId), n = s.servings || 1;
       if (!r) return { kind: 'text', label: '(deleted recipe)', servings: n, protein: null, sub: '' };
-      const cook = s.cook || r.servings;
-      const subs = [];
-      if (n !== 1) subs.push(`${n} servings`);
-      if (cook > n) subs.push(`cook ${cook}`);
-      return { kind: 'recipe', recipe: r, servings: n, label: r.name, sub: subs.join(' · '), cook,
+      const leftovers = leftoverSlots(plan, dayIdx, key), planned = n + leftovers.reduce((t, x) => t + x.servings, 0);
+      const fixed = Number(s.cook) > 0, cook = fixed ? Number(s.cook) : plannedCook(plan, dayIdx, key, r, n);
+      // A typed cook amount, or a batch recipe cooking past the plan, cooks in full whenever anything is uncovered.
+      return { kind: 'recipe', recipe: r, servings: n, label: r.name, sub: n !== 1 ? `${n} servings` : '', cook,
+        cookFixed: fixed || cook > planned, leftovers,
         protein: r.proteinPerServingG != null ? r.proteinPerServingG * n : null };
     }
     return { kind: 'text', label: s.text || '', servings: 1, protein: s.proteinG != null ? s.proteinG : null, sub: '' };
@@ -241,7 +267,7 @@
       const r = resolveSlot(plan, i, k);
       if (!r || !r.recipe || !day.date || done.has(day.date + '|' + k)) return;
       const m = byRecipe.get(r.recipe.id) || { recipe: r.recipe, needed: 0, cookSlots: [] };
-      if (r.kind === 'recipe' && !day.slots[k].cooked) m.cookSlots.push({ key: day.date + '|' + k, cook: r.cook });
+      if (r.kind === 'recipe' && !day.slots[k].cooked) m.cookSlots.push({ key: day.date + '|' + k, cook: r.cook, fixed: r.cookFixed });
       m.needed += r.servings;
       byRecipe.set(r.recipe.id, m);
     }));
@@ -266,11 +292,10 @@
     const byRecipe = weekMeals(week), slotCook = {};
     for (const m of byRecipe.values()) {
       m.covered = Math.min(free.get(m.recipe.id) || 0, m.needed);
-      const batch = (m.recipe.tags || []).includes('batch');
       let left = m.needed - m.covered;
       m.cook = 0;
       for (const c of m.cookSlots) {
-        const amt = left <= 0 ? 0 : batch || !m.covered ? c.cook : Math.min(c.cook, left);
+        const amt = left <= 0 ? 0 : c.fixed || !m.covered ? c.cook : Math.min(c.cook, left);
         slotCook[c.key] = amt; m.cook += amt; left -= amt;
       }
       m.spare = round(m.covered + m.cook - m.needed, 2);
@@ -1367,7 +1392,7 @@
           ? `<button class="item-name link-plain" data-action="show-recipe" data-id="${r.recipe.id}" ${r.kind === 'recipe' && r.cook ? `data-cook="${r.cook}"` : ''}>${esc(r.label)}</button>`
           : `<span class="item-name">${esc(r.label)}</span>`;
         html += `<div class="item"><span class="item-mark"></span>
-          <div class="item-main">${nameHtml} ${r.recipe ? lactoseBadge(r.recipe) : ''}${r.sub || larderNote ? `<div class="item-sub">${esc([r.sub, larderNote].filter(Boolean).join(' · '))}</div>` : ''}</div>
+          <div class="item-main">${nameHtml} ${r.recipe ? lactoseBadge(r.recipe) : ''}${r.sub || larderNote || cookNote(r, cookAmt) ? `<div class="item-sub">${esc([r.sub, cookNote(r, cookAmt), larderNote].filter(Boolean).join(' · '))}</div>` : ''}</div>
           <span class="item-g">${gram(r.protein)}</span>
           <span class="split edit-only item-act"><button class="btn small primary" data-action="eat" data-slot="${k}" data-hold="meal-menu">${batchCook ? 'Cooked &amp; eaten' : 'Eaten'}</button><button class="btn small primary more" data-action="meal-menu" data-slot="${k}" aria-label="More options">⋯</button></span></div>`;
       }
@@ -1429,8 +1454,9 @@
           const m = alloc.byRecipe.get(r.recipe.id), amt = alloc.slotCook[d.date + '|' + k];
           if (sl.cooked) sub = [r.servings !== 1 ? `${r.servings} servings` : '', `cooked ${sl.cooked.made}`].filter(Boolean).join(' · ');
           else if (m && amt === 0 && m.covered > 0) sub = 'from the larder';
-          else if (m && amt > 0 && (m.covered > 0 || m.spare > 0))
-            sub = `${m.covered > 0 ? `larder covers ${m.covered} · ` : ''}cooking ${amt}${m.spare > 0 ? ` leaves ${m.spare} spare` : ''}`;
+          else if (m && amt > 0 && m.covered > 0)
+            sub = `larder covers ${m.covered} · cooking ${amt}${m.spare > 0 ? ` leaves ${m.spare} spare` : ''}`;
+          else if (amt > r.servings) sub = [r.sub, cookNote(r, amt)].filter(Boolean).join(' · ');
         }
         html += `<button class="slot-row" data-action="edit-slot" data-day="${i}" data-slot="${k}">
           <span class="slot-label">${SLOT_LABEL[k]}</span>
@@ -1704,8 +1730,8 @@
         body = recipePicker(m)
           + (r ? `<p>${lactoseBadge(r)} <span class="muted">${r.proteinPerServingG != null ? r.proteinPerServingG + ' g protein per serving' : 'Protein not set yet'} · recipe makes ${r.servings}</span></p>` : '')
           + `<div class="row">${field('Servings eaten', `<input type="number" inputmode="decimal" step="0.5" min="0.5" data-m="servings" data-type="num" value="${esc(m.servings)}">`)}
-            ${field('Servings to cook', `<input type="number" inputmode="decimal" step="1" min="1" data-m="cook" data-type="num" value="${esc(m.cook == null ? '' : m.cook)}" placeholder="${r ? r.servings : ''}">`)}</div>
-            <p class="muted">The shopping list buys for the servings cooked. Use Leftovers in later slots for the rest.</p>`;
+            ${field('Servings to cook', `<input type="number" inputmode="decimal" step="1" min="1" data-m="cook" data-type="num" value="${esc(m.cook == null ? '' : m.cook)}" placeholder="${r ? plannedCook(viewPlan(ui.week), m.day, m.slot, r, Number(m.servings) || 1) : ''}">`)}</div>
+            <p class="muted">Leave blank to cook this meal plus its Leftovers in later slots. Type a number to cook extra for the larder. The shopping list buys for the servings cooked.</p>`;
       } else if (m.mode === 'leftover') {
         body = sources.length ? field('Leftovers from', `<select data-m="src" data-rerender><option value="">Choose…</option>${sources.map(s => `<option value="${s.v}" ${s.v === m.src ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select>`)
           + field('Servings eaten', `<input type="number" inputmode="decimal" step="0.5" min="0.5" data-m="servings" data-type="num" value="${esc(m.servings)}">`)

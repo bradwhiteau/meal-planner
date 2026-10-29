@@ -313,7 +313,9 @@
     t.has('Prepared meal shows in the Fridge with 🍲 and eat or freeze', c.loc('Fridge').innerText, 'eat or freeze');
     await c.go(c.w.__mp.today());
     t.has('Today flags the old fridge portions', c.$('.card.prep') ? c.$('.card.prep').innerText : '', 'eat or freeze');
-    await c.click('[data-action="freeze-portion"]', 150);
+    // Freeze the 4-day-old row (on a Thursday or later, Monday's cook is also old enough to be flagged).
+    const oldRow = (await c.all('pantryItems')).find(p => p.recipeId === 'bol' && p.cookedOn === fourDaysAgo);
+    await c.click(`[data-action="freeze-portion"][data-id="${oldRow.id}"]`, 150);
     t.ok('Freeze moved them', (await c.larder()).includes(`🍲bol×2@Freezer`));
     await c.click('[data-action="add-to"][data-slot="snack"]', 60);
     await c.click('#modal [data-action="pick-recipe"][data-id="bol"]', 60);
@@ -375,6 +377,47 @@
     // Still covered exactly: one fewer portion and next week's lunch has to cook again.
     await c.importJson(patch({ pantryItems: (await c.all('pantryItems')).filter(p => p.recipeId === 'morn').map(p => ({ ...p, qty: p.qty - 1, updatedAt: new Date(Date.now() + 5000).toISOString() })) }));
     t.eq('One mornay short: next Monday cooks 1 again', c.w.__mp.alloc(day(7)).slotCook[day(7) + '|lunch'], 1);
+  });
+
+  scenario('Bulgogi: cook what the plan eats, say where the rest goes (2.3.0)', async (c, t) => {
+    await c.importJson(patch({
+      ingredients: [mk('bulg', { name: 'Costco beef bulgogi', defaultUnit: 'g', store: 'Costco', aisle: 'Ready meals' }),
+        mk('chk', { name: 'Chicken thigh', defaultUnit: 'g', store: 'Butcher', aisle: 'Meat' })],
+      recipes: [mk('bul', { name: 'Bulgogi', servings: 1, proteinPerServingG: 54, lactose: 'none', tags: ['Costco ready-meal'], method: '',
+        ingredients: [{ ingredientId: 'bulg', qty: 300, unit: 'g' }] }),
+      mk('old4', { name: 'Old four-serve', servings: 4, proteinPerServingG: 40, lactose: 'none', tags: [], method: '',
+        ingredients: [{ ingredientId: 'chk', qty: 800, unit: 'g' }] }),
+      mk('cur', { name: 'Curry', servings: 1, proteinPerServingG: 49, lactose: 'none', tags: ['batch'], method: '',
+        ingredients: [{ ingredientId: 'chk', qty: 200, unit: 'g' }] })],
+      weekPlans: [weekPlan('w0', 0, {
+        0: { dinner: { recipeId: 'bul', servings: 1, cook: null }, lunch: { recipeId: 'cur', servings: 1, cook: null },
+          breakfast: { recipeId: 'old4', servings: 1, cook: null } },
+        1: { lunch: { leftoverOf: { day: 0, slot: 'lunch' }, servings: 1 } },
+        2: { dinner: { leftoverOf: { day: 0, slot: 'lunch' }, servings: 1 } },
+        3: { dinner: { recipeId: 'bul', servings: 1, cook: null } },
+        4: { dinner: { recipeId: 'bul', servings: 1, cook: 3 } },
+        5: { lunch: { leftoverOf: { day: 4, slot: 'dinner' }, servings: 1 } } })],
+    }));
+    const slot = (d, k) => c.w.__mp.alloc(day(0)).slotCook[day(d) + '|' + k];
+    t.eq('Single-serve bulgogi with no leftovers cooks 1', slot(0, 'dinner'), 1);
+    t.eq('A four-serve recipe eaten once, no leftovers, cooks 1 (not the whole recipe)', slot(0, 'breakfast'), 1);
+    t.eq('Curry cooks this meal plus its 2 leftovers', slot(0, 'lunch'), 3);
+    t.eq('A typed cook amount wins', slot(4, 'dinner'), 3);
+    await c.go(day(0));
+    t.eq('Bulgogi card: no cook note, just Eaten', [c.card('dinner').querySelector('.item-sub') ? c.card('dinner').querySelector('.item-sub').innerText : '',
+      c.card('dinner').querySelector('[data-action="eat"]').innerText], ['', 'Eaten']);
+    t.has('Curry card says where the rest goes', c.card('lunch').innerText, 'cook 3 · 2 for leftovers (Tue lunch, Wed dinner)');
+    await c.go(day(4));
+    t.has('Cooking extra: leftovers and spare for the larder', c.card('dinner').innerText, 'cook 3 · 1 for leftovers (Sat lunch) · 1 spare for the larder');
+    await c.week(day(0));
+    t.has('Week view shows the same note', c.$$('.slot-row').map(b => b.innerText.replace(/\s*\n\s*/g, ' ')).join(' / '), 'cook 3 · 2 for leftovers (Tue lunch, Wed dinner)');
+    await c.click('[data-action="generate"]', 300);
+    t.eq('Buys bulgogi by weight for 5 meals: 1.5 kg', c.shopText('Costco beef bulgogi').split(' | ').slice(0, 2), ['Costco beef bulgogi', '1.5 kg']);
+    await c.click(c.shopRow('Costco beef bulgogi').querySelector('[data-action="tick"]'), 150);
+    await c.click(c.shopRow('Costco beef bulgogi').querySelector('[data-action="edit-item"]'));
+    await c.set('#modal [data-m="draft.boughtQty"]', '2.35'); await c.set('#modal [data-m="draft.boughtUnit"]', 'kg');
+    await c.click('[data-action="save-item"]', 150);
+    t.eq('Bought 2.35 kg: the larder holds what was actually bought', (await c.larder()).filter(x => x.startsWith('bulg')), ['bulg:2350g@']);
   });
 
   scenario('Pepsi Max: one item in two places (2.0.2)', async (c, t) => {

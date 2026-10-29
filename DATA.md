@@ -58,7 +58,7 @@ Every record has `id` (UUID), `createdAt` and `updatedAt` (ISO 8601, UTC).
 
 | Slot | Meaning |
 |---|---|
-| `{"recipeId": "…", "servings": 1, "cook": 4}` | Eat `servings` of a recipe; cook `cook` servings (null = the whole recipe). The shopping list buys for `cook`, less what Larder portions cover. |
+| `{"recipeId": "…", "servings": 1, "cook": 4}` | Eat `servings` of a recipe; cook `cook` servings. `null` = cook what the plan eats: this slot plus the leftover slots pointing at it (batch recipes cook at least the whole recipe). The shopping list buys for the servings cooked, less what Larder portions cover. |
 | `{"leftoverOf": {"day": 0, "slot": "dinner"}, "servings": 1, "freezer": false}` | Leftovers of an earlier slot in the same week. `day` 0 = Monday … 6 = Sunday. `freezer: true` adds a night-before "move it to the fridge" reminder. |
 | `{"text": "Eating out", "proteinG": 40}` | Free text with an optional protein estimate. |
 
@@ -67,8 +67,9 @@ ingredients taken from the Larder and the portions put away. Keep it unchanged w
 list buying that cook's ingredients again. Copies of a week and templates never carry it.
 
 **Portions cover meals first.** For each recipe, portions in the Larder, plus the spare portions earlier weeks plan to cook
-but haven't yet (less what those weeks eat), cover that week's meals of it before anything is cooked. Recipes tagged `batch` then cook their full batch if anything is uncovered (the spare goes
-in the freezer); other recipes cook only what isn't covered. Prepared meals in latest.json are worth planning around.
+but haven't yet (less what those weeks eat), cover that week's meals of it before anything is cooked. A typed `cook`, or a `batch` recipe whose whole recipe is more than the plan eats, then cooks in full if anything is uncovered
+(the spare goes in the freezer); otherwise only what isn't covered is cooked. Recipes are written as single servings
+(`servings: 1`, amounts for one meal), so the plan decides how much is cooked. Prepared meals in latest.json are worth planning around.
 
 Units are metric: `g`, `kg`, `ml`, `L`, or a count (`each`, `tin`, `pack`, `bunch`, `loaf`). g/kg and ml/L are summed together on the shopping list.
 
