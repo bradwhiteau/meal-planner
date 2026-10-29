@@ -2,6 +2,11 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.4.3
+
+- Searching the Larder hides the heading and the four buttons while the search box is in use, so results show above the
+  phone's keyboard. They come back when the search is cleared and you leave the box.
+
 ## 2.4.2
 
 - Fix: name and aisle suggestions are now the app's own list under the box. Android Chrome's built-in suggestion pop-up

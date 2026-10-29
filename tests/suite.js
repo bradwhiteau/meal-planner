@@ -460,10 +460,14 @@
     await c.set('#larder-q', 'LITT');
     const shown = () => c.$$('.larder-loc').map(x => x.querySelector('.loc-name').innerText.trim() + ':' + [...x.querySelectorAll('.pantry-row .larder-name')].map(b => b.childNodes[0].textContent.trim()).join(','));
     t.eq('Search "LITT": just Pantry Ground, just the litter', shown(), ['Pantry Ground:Kitty litter']);
+    const buttonsShown = () => !!c.$('.larder-actions').offsetParent;
+    t.ok('While searching, the heading and buttons step aside (results fit above the keyboard)', !buttonsShown());
     t.ok('…opened without being typed into it again', c.$('#larder-q') && c.$('#larder-q').value === 'LITT');
     await c.set('#larder-q', 'zzz');
     t.has('No match says so', c.$('#larder-body').innerText, 'Nothing in the larder matches');
     await c.set('#larder-q', '');
+    c.$('#larder-q').blur(); await sleep(30);
+    t.ok('Cleared and left: the buttons are back', buttonsShown());
     t.eq('Cleared: every location back', shown().map(x => x.split(':')[0]), ['Pantry Shelf 1', 'Pantry Ground']);
     t.eq('Searching didn\'t change which locations stay open', localStorage.getItem('mpt.larderOpen'), folds);
     await c.shop(day(0)); await c.click('[data-action="regenerate"]', 300);

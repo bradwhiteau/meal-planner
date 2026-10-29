@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.4.2';
+  const APP_VERSION = '2.4.3';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1602,12 +1602,12 @@
   }
   // The Larder screen: actions, a search box, then the locations. Typing only redraws the list below the box.
   function renderPantry() {
-    return `<h1>Larder</h1>
+    return `<div id="larder" class="${ui.larderQuery.trim() ? 'searching' : ''}"><h1>Larder</h1>
       <div class="larder-actions edit-only">
         <button class="btn" data-action="add-pantry">+ Add to larder</button><button class="btn" data-action="add-portion">🍲 + Prepared meal</button>
         <button class="btn" data-action="baked">🍞 Baked sourdough</button><button class="btn" data-action="eggs">🥚 Collected eggs</button></div>
       <input type="search" id="larder-q" placeholder="Search the larder" value="${esc(ui.larderQuery)}">
-      <div id="larder-body">${larderBody()}</div>`;
+      <div id="larder-body">${larderBody()}</div></div>`;
   }
   // Locations fold away (closed until opened, remembered on this device). While searching, only rows whose name
   // matches show, locations with none are hidden, and the rest open (without changing what's remembered).
@@ -2614,6 +2614,7 @@
       ui.recipeQuery = el.value; $('#recipe-list').innerHTML = recipeList();
     } else if (el.id === 'larder-q') {
       ui.larderQuery = el.value; $('#larder-body').innerHTML = larderBody();
+      larderSearching(!!el.value.trim() || document.activeElement === el);
     }
   }
   document.addEventListener('input', onField);
@@ -2621,6 +2622,11 @@
   // Tapping a suggestion mustn't take focus from the field first (its change event would redraw the sheet mid-tap).
   document.addEventListener('mousedown', e => { if (e.target.closest && e.target.closest('.suggest')) e.preventDefault(); });
   // Suggestions go away when you move to another field.
+  // While searching the Larder (box focused or holding text), the heading and buttons step aside so results show
+  // above the phone's keyboard.
+  const larderSearching = on => { const l = $('#larder'); if (l) l.classList.toggle('searching', on); };
+  document.addEventListener('focusin', e => { if (e.target.id === 'larder-q') { larderSearching(true); window.scrollTo(0, 0); } });
+  document.addEventListener('focusout', e => { if (e.target.id === 'larder-q') larderSearching(!!e.target.value.trim()); });
   document.addEventListener('focusin', e => {
     document.querySelectorAll('.suggest').forEach(x => { if (!x.contains(e.target) && x.previousElementSibling !== e.target) x.remove(); });
   });
