@@ -313,6 +313,9 @@ body.viewer .stepper.stacked .qty { grid-row: auto; }
 /* Larder: actions at the top, locations that fold */
 .larder-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0 14px; }
 .larder-actions .btn { min-height: 48px; }
+#larder-q { margin: 0 0 12px; }
+.stepper.stacked .qty .min { display: block; font-size: .72rem; font-weight: 500; color: var(--muted); }
+.stepper.stacked .qty .min.warn-text { color: var(--warn); }
 .larder-loc { margin: 8px 0; }
 .larder-loc > summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; list-style: none;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-height: 52px; }

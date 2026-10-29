@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.4.0';
+  const APP_VERSION = '2.4.1';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -140,7 +140,7 @@
   // ---------- UI state ----------
   const ui = {
     view: 'today', date: todayStr(), today: todayStr(), week: mondayOf(todayStr()), shopWeek: mondayOf(todayStr()),
-    modal: null, recipeQuery: '', recipeTag: '', hideTicked: false,
+    modal: null, recipeQuery: '', larderQuery: '', recipeTag: '', hideTicked: false,
   };
 
   // ---------- week plans ----------
@@ -1572,34 +1572,41 @@
   function larderRow(p) {
     const step = norm(1, p.unit).measured ? (p.unit === 'kg' || p.unit.toLowerCase() === 'l' ? 0.5 : 100) : 1;
     const when = p.updatedAt ? fmtDate(ymd(new Date(p.updatedAt))) : '', ing = byId('ingredients', p.ingredientId);
-    const low = keepLow(p.ingredientId) ? `<span class="warn-text">below ${esc(fmtQty(Number(ing.keepQty), ing.keepUnit))}</span>` : '';
-    const sub = [low, when ? `changed ${when}` : ''].filter(Boolean).join(' · ');
-    return `<div class="pantry-row ${Number(p.qty) > 0 ? '' : 'out'}"><button class="grow larder-name" data-action="edit-pantry" data-id="${p.id}">
-        ${esc(ingName(p.ingredientId))}${sub ? `<span class="sub">${sub}</span>` : ''}</button>
-      <span class="stepper stacked"><button class="qty" data-action="edit-pantry" data-id="${p.id}">${esc(fmtQty(Number(p.qty) || 0, p.unit))}</button>
+    const min = keepOf(ing) ? `<small class="min ${keepLow(p.ingredientId) ? 'warn-text' : ''}">Min: ${esc(fmtQty(Number(ing.keepQty), ing.keepUnit))}</small>` : '';
+    return `<div class="pantry-row ${Number(p.qty) > 0 ? '' : 'out'}" data-name="${esc(ingName(p.ingredientId).toLowerCase())}"><button class="grow larder-name" data-action="edit-pantry" data-id="${p.id}">
+        ${esc(ingName(p.ingredientId))}${when ? `<span class="sub">changed ${when}</span>` : ''}</button>
+      <span class="stepper stacked"><button class="qty" data-action="edit-pantry" data-id="${p.id}">${esc(fmtQty(Number(p.qty) || 0, p.unit))}${min}</button>
       <button class="edit-only plus" data-action="pantry-step" data-id="${p.id}" data-d="${step}" aria-label="More">+</button>
       <button class="edit-only minus" data-action="pantry-step" data-id="${p.id}" data-d="${-step}" aria-label="Less">−</button></span></div>`;
   }
   // A prepared meal in its location: a 🍲 marks it as cooked food, with portions instead of a stepper.
   function mealRow(x) {
     const due = useByDue(x);
-    return `<div class="pantry-row portion ${due ? 'due' : ''}"><button class="grow larder-name" data-action="edit-portion" data-id="${x.id}">
+    return `<div class="pantry-row portion ${due ? 'due' : ''}" data-name="${esc(((byId('recipes', x.recipeId) || {}).name || 'meal').toLowerCase())}"><button class="grow larder-name" data-action="edit-portion" data-id="${x.id}">
       <span class="meal-icon" aria-hidden="true">🍲</span>${esc((byId('recipes', x.recipeId) || {}).name || 'Meal')}
       <span class="sub">${x.cookedOn ? `cooked ${fmtDate(x.cookedOn)}` : 'prepared meal'}${due ? ' · eat or freeze' : ''}</span></button>
       <span class="portion-count">${x.qty} <small>portion${x.qty === 1 ? '' : 's'}</small></span></div>`;
   }
+  // The Larder screen: actions, a search box, then the locations. Typing only redraws the list below the box.
   function renderPantry() {
+    return `<h1>Larder</h1>
+      <div class="larder-actions edit-only">
+        <button class="btn" data-action="add-pantry">+ Add to larder</button><button class="btn" data-action="add-portion">🍲 + Prepared meal</button>
+        <button class="btn" data-action="baked">🍞 Baked sourdough</button><button class="btn" data-action="eggs">🥚 Collected eggs</button></div>
+      <input type="search" id="larder-q" placeholder="Search the larder" value="${esc(ui.larderQuery)}">
+      <div id="larder-body">${larderBody()}</div>`;
+  }
+  // Locations fold away (closed until opened, remembered on this device). While searching, only rows whose name
+  // matches show, locations with none are hidden, and the rest open (without changing what's remembered).
+  function larderBody() {
+    const q = ui.larderQuery.trim().toLowerCase();
+    const hit = x => !q || (x.recipeId ? (byId('recipes', x.recipeId) || {}).name || 'meal' : ingName(x.ingredientId)).toLowerCase().includes(q);
     const byName = (a, b) => ingName(a.ingredientId).localeCompare(ingName(b.ingredientId));
     const ingRows = S.pantryItems.filter(p => !isPortion(p));
     const stocked = ingRows.filter(p => Number(p.qty) > 0), out = ingRows.filter(p => !(Number(p.qty) > 0)).sort(byName);
     const meals = S.pantryItems.filter(p => isPortion(p) && Number(p.qty) > 0);
     const mealName = x => (byId('recipes', x.recipeId) || {}).name || '';
-    // The everyday actions sit at the top; each location folds away (closed until opened, remembered on this device).
-    let html = `<h1>Larder</h1>
-      <div class="larder-actions edit-only">
-        <button class="btn" data-action="add-pantry">+ Add to larder</button><button class="btn" data-action="add-portion">🍲 + Prepared meal</button>
-        <button class="btn" data-action="baked">🍞 Baked sourdough</button><button class="btn" data-action="eggs">🥚 Collected eggs</button></div>
-      <div class="grid stores">`;
+    let html = `<div class="grid stores">`, found = 0;
     const open = larderOpen();
     // Each location lists its prepared meals first (oldest first), then ingredients A–Z.
     for (const loc of locationOrder()) {
@@ -1608,17 +1615,28 @@
       const rows = stocked.filter(p => locOf(p) === loc).sort(byName);
       if (!rows.length && !here.length) continue;
       const due = here.some(useByDue), key = loc || '~none';
+      if (q) {
+        const mh = here.filter(hit), rh = rows.filter(hit);
+        if (!mh.length && !rh.length) continue;
+        found += mh.length + rh.length;
+        html += `<details class="larder-loc" data-loc="${esc(key)}" data-search open>
+          <summary><span class="loc-name">${esc(loc || 'No location')}</span><span class="muted">${mh.length + rh.length} of ${here.length + rows.length}</span></summary>
+          <div class="larder-list">${mh.map(mealRow).join('')}${rh.map(larderRow).join('')}</div></details>`;
+        continue;
+      }
       html += `<details class="larder-loc" data-loc="${esc(key)}" ${open.includes(key) ? 'open' : ''}>
         <summary><span class="loc-name">${esc(loc || 'No location')}</span>
           <span class="muted">${due ? '<span class="warn-text" title="Something here needs eating or freezing">⚠</span> ' : ''}${here.length ? `🍲${here.length} · ` : ''}${here.length + rows.length}</span></summary>
         <div class="larder-list">${here.map(mealRow).join('')}${rows.map(larderRow).join('')}</div></details>`;
     }
     html += '</div>';
-    if (!stocked.length && !meals.length) html += `<div class="card empty"><p>The larder's empty.</p><p class="muted">Tick items on the shopping list as you buy them, or add what you already have.</p></div>`;
-    if (out.length) {
-      html += `<details class="run-out"><summary>Run out (${out.length})</summary>
+    const outShown = out.filter(hit);
+    if (q && !found && !outShown.length) html += `<p class="muted center">Nothing in the larder matches "${esc(ui.larderQuery.trim())}".</p>`;
+    if (!q && !stocked.length && !meals.length) html += `<div class="card empty"><p>The larder's empty.</p><p class="muted">Tick items on the shopping list as you buy them, or add what you already have.</p></div>`;
+    if (outShown.length) {
+      html += `<details class="run-out" ${q ? 'open' : ''}><summary>Run out (${outShown.length})</summary>
         <p class="muted">Tap one to restock or remove it. Remove anything you won't buy again.</p>
-        <div class="grid tight">${out.map(larderRow).join('')}</div></details>`;
+        <div class="grid tight">${outShown.map(larderRow).join('')}</div></details>`;
     }
     return html;
   }
@@ -2579,13 +2597,15 @@
       ui.modal.q = el.value; $('#pick-list').innerHTML = pickRows(ui.modal);
     } else if (el.id === 'recipe-q') {
       ui.recipeQuery = el.value; $('#recipe-list').innerHTML = recipeList();
+    } else if (el.id === 'larder-q') {
+      ui.larderQuery = el.value; $('#larder-body').innerHTML = larderBody();
     }
   }
   document.addEventListener('input', onField);
   // <details> toggles don't bubble, so listen in the capture phase.
   document.addEventListener('toggle', e => {
     const el = e.target;
-    if (el.classList && el.classList.contains('larder-loc')) setLarderOpen(el.dataset.loc, el.open);
+    if (el.classList && el.classList.contains('larder-loc') && !el.hasAttribute('data-search')) setLarderOpen(el.dataset.loc, el.open);
   }, true);
   document.addEventListener('change', e => {
     const el = e.target;

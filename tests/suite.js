@@ -442,6 +442,20 @@
     await c.click('[data-action="save-pantry"]', 150);
     const lit = (await c.all('ingredients')).find(i => i.id === 'litter');
     t.eq('Saved on the item: keep at least 2 bags', [lit.keepQty, lit.keepUnit], [2, 'bag']);
+    const minLine = () => { const m = c.loc('Pantry Ground').querySelector('.qty .min'); return m ? [m.innerText, m.classList.contains('warn-text')] : null; };
+    t.eq('Under the amount: Min: 2 bag (not flagged at 2)', minLine(), ['Min: 2 bag', false]);
+    // Search: only matching rows, only locations that have one; fold state isn't remembered.
+    c.loc('Pantry Ground').open = false; await sleep(60);      // closed, so a search opening it would show
+    const folds = localStorage.getItem('mpt.larderOpen');
+    await c.set('#larder-q', 'LITT');
+    const shown = () => c.$$('.larder-loc').map(x => x.querySelector('.loc-name').innerText.trim() + ':' + [...x.querySelectorAll('.pantry-row .larder-name')].map(b => b.childNodes[0].textContent.trim()).join(','));
+    t.eq('Search "LITT": just Pantry Ground, just the litter', shown(), ['Pantry Ground:Kitty litter']);
+    t.ok('…opened without being typed into it again', c.$('#larder-q') && c.$('#larder-q').value === 'LITT');
+    await c.set('#larder-q', 'zzz');
+    t.has('No match says so', c.$('#larder-body').innerText, 'Nothing in the larder matches');
+    await c.set('#larder-q', '');
+    t.eq('Cleared: every location back', shown().map(x => x.split(':')[0]), ['Pantry Shelf 1', 'Pantry Ground']);
+    t.eq('Searching didn\'t change which locations stay open', localStorage.getItem('mpt.larderOpen'), folds);
     await c.shop(day(0)); await c.click('[data-action="regenerate"]', 300);
     t.eq('2 bags in the Larder: nothing to buy', c.shopText('Kitty litter'), '(no line)');
     t.has('Rice: 1.2 kg for the bowl + keep 2 kg − 1.5 kg on hand = 2 × 1 kg', c.shopText('Basmati rice'), '2 × 1 kg');
@@ -449,7 +463,7 @@
     // Finish a bag.
     await c.tab('pantry');
     await c.click(c.loc('Pantry Ground').querySelector('[data-action="pantry-step"][data-d="-1"]'), 120);
-    t.has('Larder flags it: below 2 bag', c.loc('Pantry Ground').innerText, 'below 2 bag');
+    t.eq('Down to 1: Min: 2 bag turns orange', minLine(), ['Min: 2 bag', true]);
     await c.shop(day(0)); await c.click('[data-action="regenerate"]', 300);
     t.eq('Down to 1: one bag goes on the list', c.shopText('Kitty litter').split(' | ').slice(0, 2), ['Kitty litter', '1 bag']);
     t.has('…marked keep at least', c.shopText('Kitty litter'), 'keep at least 2 bag');

@@ -2,6 +2,13 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.4.1
+
+- **Search the larder:** a search box under the Larder buttons. Typing shows only matching items (and prepared meals), hides
+  locations with none, and opens the rest, without changing which locations stay open normally.
+- **Min:** items with a "Keep at least" show "Min: 2 pack" under the amount, orange when below it (replaces "below 2 pack"
+  beside the name).
+
 ## 2.4.0
 
 - **Keep at least:** set on any Larder item (tap it). The shopping list tops the item up so at least that much is left after

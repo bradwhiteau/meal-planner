@@ -42,7 +42,8 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
 - **Shop tab:** grouped by store, then aisle. Tap a row, or swipe it right, to tick it. The **$** button sets price, quantity, store, aisle and "local".
   Store, aisle and local are saved to the ingredient, so you fix an item once. **Regenerate** after changing the plan or pantry; ticks, prices and hand-added items are kept.
   A week's first list brings over last week's unticked hand-added items.
-- **Larder tab:** **+ Add to larder**, **🍲 + Prepared meal**, **Baked sourdough** and **Collected eggs** sit at the top. Below, each location (Fridge, Freezer, Pantry Shelf 1…; edit the list in Settings) folds open and closed, showing its 🍲 meals and item count, with ⚠ if something inside needs eating or freezing. It works by itself:
+- **Larder tab:** **+ Add to larder**, **🍲 + Prepared meal**, **Baked sourdough** and **Collected eggs** sit at the top. Below, each location (Fridge, Freezer, Pantry Shelf 1…; edit the list in Settings) folds open and closed, showing its 🍲 meals and item count, with ⚠ if something inside needs eating or freezing. **Search the larder** (under the buttons) shows only
+  the items whose name matches, and only the locations that have one. It works by itself:
   ticking a bought item on the Shop tab adds it, and tapping **Eaten** on a meal you cooked takes that recipe's ingredients out
   (the whole batch; leftovers take nothing). Undo puts it back. Anything at zero moves to **Run out**; tap it to restock or
   remove it. **Baked sourdough** adds a loaf; **Collected eggs** adds eggs.
@@ -55,7 +56,8 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
   fridge first. Cooked ahead (Sunday batch)? Use **⋯ → Cooked, eating later**. Undo puts everything back.
 - **Keep at least:** for things you never want to run out of (kitty litter, dog biscuits, rice), tap the item in the Larder
   and set **Keep at least**, e.g. 2 bags. It counts across every location. When what's left after the week's meals would
-  drop below it, the list tops it up ("keep at least 2 bag" under the line), and the Larder marks it "below 2 bag". Finish a
+  drop below it, the list tops it up ("keep at least 2 bag" under the line). In the Larder, "Min: 2 bag" sits under the amount
+  and turns orange when it's below. Finish a
   bag, tap −, and the next list adds one. A top-up already on another week's unbought list isn't added twice.
 - **Portions count before shopping:** spare portions in the larder cover the week's meals of that recipe first. Week shows it,
   e.g. "larder covers 2 · cooking 6 leaves 3 spare" or "from the larder". Batch recipes still cook a full batch when anything is
