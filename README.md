@@ -53,6 +53,10 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
   went (it suggests the fridge for the next 3 days' meals, the rest to the freezer); the ingredients come out of the larder and
   the portions go in, marked 🍲 in their fridge or freezer. Leftovers and later meals of that recipe then just say **Eaten** and take a portion,
   fridge first. Cooked ahead (Sunday batch)? Use **⋯ → Cooked, eating later**. Undo puts everything back.
+- **Keep at least:** for things you never want to run out of (kitty litter, dog biscuits, rice), tap the item in the Larder
+  and set **Keep at least**, e.g. 2 bags. It counts across every location. When what's left after the week's meals would
+  drop below it, the list tops it up ("keep at least 2 bag" under the line), and the Larder marks it "below 2 bag". Finish a
+  bag, tap −, and the next list adds one. A top-up already on another week's unbought list isn't added twice.
 - **Portions count before shopping:** spare portions in the larder cover the week's meals of that recipe first. Week shows it,
   e.g. "larder covers 2 · cooking 6 leaves 3 spare" or "from the larder". Batch recipes still cook a full batch when anything is
   short; the spare goes in the freezer.

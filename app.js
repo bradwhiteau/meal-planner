@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.3.0';
+  const APP_VERSION = '2.4.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -316,10 +316,38 @@
         cur.qty += n.qty; cur.recipes.add(r.name); need.set(key, cur);
       }
     }
+    for (const ing of S.ingredients) {
+      const k = keepOf(ing); if (!k) continue;
+      const key = ing.id + '|' + k.unit;
+      const cur = need.get(key) || { ingredientId: ing.id, unit: k.unit, qty: 0, measured: k.measured, recipes: new Set() };
+      cur.keep = k.qty; need.set(key, cur);
+    }
     return [...need.values()].map(x => {
-      const have = larderQty(x.ingredientId, x.unit);
-      return { ...x, gross: Math.ceil(x.qty - 0.001), larder: round(Math.min(have, x.qty), 3), qty: x.qty - have };
+      const have = larderQty(x.ingredientId, x.unit), short = Math.max(0, x.qty - have);
+      const keepShort = x.keep ? Math.max(0, x.qty + x.keep - have - short - keepPending(x.ingredientId, x.unit, week)) : 0;
+      return { ...x, gross: Math.ceil(x.qty - 0.001), larder: round(Math.min(have, x.qty), 3), keepShort: round(keepShort, 3), qty: short + keepShort };
     }).filter(x => x.qty > 0.001).map(x => ({ ...x, qty: Math.ceil(x.qty - 0.001) }));
+  }
+  // "Keep at least": things Brad never wants to run out of (kitty litter, rice), set on the ingredient as keepQty +
+  // keepUnit and counted across every Larder location. The list buys enough for the week's meals and still leaves
+  // that much afterwards. A top-up already on another current week's unbought list isn't added again.
+  const keepOf = ing => (ing && Number(ing.keepQty) > 0 && ing.keepUnit ? norm(Number(ing.keepQty), ing.keepUnit) : null);
+  const keepPending = (ingredientId, unit, week) => S.shoppingItems
+    .filter(i => i.ingredientId === ingredientId && !i.checked && i.weekStart !== week && i.weekStart >= mondayOf(ui.today) && Number(i.keepShort) > 0 && i.unit === unit)
+    .reduce((t, i) => t + Number(i.keepShort), 0);
+  const keepLabel = ing => `keep at least ${fmtQty(Number(ing.keepQty), ing.keepUnit)}`;
+  // Saves "Keep at least" from the Larder sheet onto the ingredient (blank or 0 clears it).
+  function setKeep(ing, d) {
+    if (!ing) return;
+    const q = Number(d.keepQty) > 0 ? Number(d.keepQty) : null, u = String(d.keepUnit || d.unit || '').trim();
+    if (q === (Number(ing.keepQty) || null) && (!q || u === ing.keepUnit)) return;
+    if (q && u) Object.assign(ing, { keepQty: q, keepUnit: u }); else { delete ing.keepQty; delete ing.keepUnit; }
+    put('ingredients', ing);
+  }
+  // Below its "Keep at least" right now (for the Larder screen)?
+  function keepLow(ingredientId) {
+    const k = keepOf(byId('ingredients', ingredientId));
+    return k && larderQty(ingredientId, k.unit) < k.qty - 0.001 ? k : null;
   }
   // Whole packs to buy for a need (in base units), when the ingredient has a pack size in a comparable unit.
   function packInfo(ing, qty, unit) {
@@ -350,7 +378,7 @@
         weekStart: week, ingredientId: n.ingredientId, text: null, qty: n.qty, unit: n.unit,
         needGross: n.gross, larderQty: n.larder, packs: pk ? pk.packs : null, buyQty: pk ? pk.buyQty : null, buyUnit: pk ? pk.buyUnit : null,
         price: estimatePrice(ing, pk), store: ing.store || '', aisle: ing.aisle || '', isLocal: !!ing.isLocal, manual: false,
-        forRecipes: [...n.recipes].join(', '),
+        forRecipes: [...n.recipes, ...(n.keepShort > 0 ? [keepLabel(ing)] : [])].join(', '), keepShort: n.keepShort || 0,
       }));
     }
     if (!old.length) {
@@ -685,6 +713,7 @@
       if (!(Number(r.packQty) > 0) || !isStr(r.packUnit) || !r.packUnit.trim()) { delete r.packQty; delete r.packUnit; }
       if (r.packPrice != null && !(Number(r.packPrice) >= 0)) delete r.packPrice;
       if (r.location != null && !isStr(r.location)) delete r.location;
+      if (!(Number(r.keepQty) > 0) || !isStr(r.keepUnit) || !r.keepUnit.trim()) { delete r.keepQty; delete r.keepUnit; }
       return true;
     },
     recipes: r => {
@@ -710,7 +739,7 @@
     },
     shoppingItems: r => {
       if (!isStr(r.weekStart)) return false;
-      for (const k of ['packs', 'buyQty', 'boughtQty', 'needGross', 'larderQty']) if (r[k] != null && !(Number(r[k]) >= 0)) delete r[k];
+      for (const k of ['packs', 'buyQty', 'boughtQty', 'needGross', 'larderQty', 'keepShort']) if (r[k] != null && !(Number(r[k]) >= 0)) delete r[k];
       for (const k of ['buyUnit', 'boughtUnit']) if (r[k] != null && !isStr(r[k])) delete r[k];
       if (r.pantryAdded != null && !(isObj(r.pantryAdded) && Number(r.pantryAdded.qty) > 0 && isStr(r.pantryAdded.unit))) delete r.pantryAdded;
       else if (r.pantryAdded && r.pantryAdded.location != null && !isStr(r.pantryAdded.location)) delete r.pantryAdded.location;
@@ -1125,7 +1154,8 @@
     const stocked = S.pantryItems.filter(x => !isPortion(x) && Number(x.qty) > 0);
     for (const loc of locationOrder()) {
       const rows = stocked.filter(x => locOf(x) === loc).sort((a, b) => ingName(a.ingredientId).localeCompare(ingName(b.ingredientId)));
-      if (rows.length) out.push(`<h3>${e(loc || 'No location')}</h3><p>${rows.map(x => `${e(ingName(x.ingredientId))} ${e(fmtQty(Number(x.qty), x.unit))}`).join('; ')}.</p>`);
+      const keep = x => { const ing = byId('ingredients', x.ingredientId); return keepOf(ing) ? ` (${e(keepLabel(ing))}${keepLow(x.ingredientId) ? ', below it' : ''})` : ''; };
+      if (rows.length) out.push(`<h3>${e(loc || 'No location')}</h3><p>${rows.map(x => `${e(ingName(x.ingredientId))} ${e(fmtQty(Number(x.qty), x.unit))}${keep(x)}`).join('; ')}.</p>`);
     }
     const out0 = S.pantryItems.filter(x => !isPortion(x) && !(Number(x.qty) > 0)).map(x => ingName(x.ingredientId)).sort();
     if (out0.length) out.push(`<h3>Run out</h3><p>${out0.map(e).join(', ')}.</p>`);
@@ -1480,8 +1510,10 @@
   function shopNeed(it) {
     if (it.manual) return '';
     const larder = Number(it.larderQty) > 0, gross = Number(it.needGross) > 0 ? it.needGross : it.qty;
-    if (!larder && !(it.packs > 0)) return '';
-    return `<span class="si-need">need ${esc(fmtQty(gross, it.unit))}${larder ? ` · ${esc(fmtQty(it.larderQty, it.unit))} in larder` : ''}</span>`;
+    const ing = Number(it.keepShort) > 0 && byId('ingredients', it.ingredientId), keep = ing && keepOf(ing) ? esc(keepLabel(ing)) : '';
+    if (!larder && !(it.packs > 0) && !keep) return '';
+    if (keep && !(Number(it.needGross) > 0)) return `<span class="si-need">${keep} · ${esc(fmtQty(larderQty(it.ingredientId, it.unit), it.unit))} in larder</span>`;
+    return `<span class="si-need">need ${esc(fmtQty(gross, it.unit))}${larder ? ` · ${esc(fmtQty(it.larderQty, it.unit))} in larder` : ''}${keep ? ` · ${keep}` : ''}</span>`;
   }
   function renderShop() {
     const week = ui.shopWeek, items = S.shoppingItems.filter(i => i.weekStart === week);
@@ -1539,9 +1571,11 @@
   }
   function larderRow(p) {
     const step = norm(1, p.unit).measured ? (p.unit === 'kg' || p.unit.toLowerCase() === 'l' ? 0.5 : 100) : 1;
-    const when = p.updatedAt ? fmtDate(ymd(new Date(p.updatedAt))) : '';
+    const when = p.updatedAt ? fmtDate(ymd(new Date(p.updatedAt))) : '', ing = byId('ingredients', p.ingredientId);
+    const low = keepLow(p.ingredientId) ? `<span class="warn-text">below ${esc(fmtQty(Number(ing.keepQty), ing.keepUnit))}</span>` : '';
+    const sub = [low, when ? `changed ${when}` : ''].filter(Boolean).join(' · ');
     return `<div class="pantry-row ${Number(p.qty) > 0 ? '' : 'out'}"><button class="grow larder-name" data-action="edit-pantry" data-id="${p.id}">
-        ${esc(ingName(p.ingredientId))}${when ? `<span class="sub">changed ${when}</span>` : ''}</button>
+        ${esc(ingName(p.ingredientId))}${sub ? `<span class="sub">${sub}</span>` : ''}</button>
       <span class="stepper stacked"><button class="qty" data-action="edit-pantry" data-id="${p.id}">${esc(fmtQty(Number(p.qty) || 0, p.unit))}</button>
       <button class="edit-only plus" data-action="pantry-step" data-id="${p.id}" data-d="${step}" aria-label="More">+</button>
       <button class="edit-only minus" data-action="pantry-step" data-id="${p.id}" data-d="${-step}" aria-label="Less">−</button></span></div>`;
@@ -1887,6 +1921,9 @@
         <div class="row">${field('Amount on hand', `<input type="number" inputmode="decimal" data-m="draft.qty" data-type="num" value="${esc(d.qty == null ? '' : d.qty)}">`)}
           ${field('Unit', unitSelect('draft.unit', m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || ''), d.unit))}</div>
         <div class="row">${field('Location', locationSelect('draft.location', d.location || ''))}</div>
+        <div class="row">${field('Keep at least', `<input type="number" inputmode="decimal" data-m="draft.keepQty" data-type="num" value="${esc(d.keepQty == null ? '' : d.keepQty)}" placeholder="no minimum">`)}
+          ${field('Unit', unitSelect('draft.keepUnit', m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || ''), d.keepUnit || d.unit))}</div>
+        <p class="muted">Keep at least: counted across every location. When what's left after the week's meals would drop below it, the shopping list tops it up.</p>
         ${ingDatalist()}
         <div class="row"><button class="btn primary" data-action="save-pantry">Save</button>
           ${m.id ? `<button class="btn danger" data-action="delete-pantry">Remove from larder</button>` : ''}${cancelBtn()}</div>`;
@@ -1950,6 +1987,7 @@
       const ing = ingByName(m.draft.name), ok = unitChoices(ing);
       if (!ok.includes(m.draft.unit)) m.draft.unit = ing && ok.includes(ing.defaultUnit) ? ing.defaultUnit : ok[0];
       if (ing && !m.draft.location) m.draft.location = ing.location || '';
+      if (ing && m.draft.keepQty == null && ing.keepQty) Object.assign(m.draft, { keepQty: ing.keepQty, keepUnit: ing.keepUnit });
       return true;
     }
     if (m.type === 'ingredient' && key === 'draft.packQty') return true;
@@ -2176,7 +2214,7 @@
       put('weekPlans', t); closeModal(); toast(`Saved template "${name}"`);
     },
     generate() {
-      if (planIsEmpty(viewPlan(ui.week))) return toast('Plan the week first');
+      if (planIsEmpty(viewPlan(ui.week)) && !S.ingredients.some(keepOf)) return toast('Plan the week first');
       const n = generateShopping(ui.week);
       ui.shopWeek = ui.week; ui.view = 'shop'; render(); window.scrollTo(0, 0);
       toast(`${n} items on the list`);
@@ -2185,7 +2223,7 @@
     // Shop
     'shop-week'(el) { ui.shopWeek = addDays(ui.shopWeek, Number(el.dataset.d)); render(); },
     regenerate() {
-      if (!planFor(ui.shopWeek)) return toast('Nothing planned that week');
+      if (!planFor(ui.shopWeek) && !S.ingredients.some(keepOf)) return toast('Nothing planned that week');
       const n = generateShopping(ui.shopWeek); render(); toast(`${n} items, ticks kept`);
     },
     'hide-ticked'() { ui.hideTicked = !ui.hideTicked; render(); },
@@ -2261,7 +2299,10 @@
       const p = byId('pantryItems', el.dataset.id);
       p.qty = Math.max(0, round((Number(p.qty) || 0) + Number(el.dataset.d), 2)); put('pantryItems', p); render();
     },
-    'edit-pantry'(el) { const p = byId('pantryItems', el.dataset.id); openModal({ type: 'pantry', id: p.id, draft: { ...clone(p), location: locOf(p) } }); },
+    'edit-pantry'(el) {
+      const p = byId('pantryItems', el.dataset.id), ing = byId('ingredients', p.ingredientId) || {};
+      openModal({ type: 'pantry', id: p.id, draft: { ...clone(p), location: locOf(p), keepQty: ing.keepQty || null, keepUnit: ing.keepUnit || p.unit } });
+    },
     'add-pantry'() { openModal({ type: 'pantry', id: null, draft: { name: '', qty: null, unit: STANDARD_UNITS[0], location: '' } }); },
     'save-pantry'() {
       const m = ui.modal, d = m.draft;
@@ -2272,6 +2313,7 @@
           same.qty = round((Number(same.qty) || 0) + norm(Number(d.qty) || 0, d.unit || p.unit).qty / norm(1, same.unit).qty, 3);
           put('pantryItems', same); remove('pantryItems', p.id);
         } else { Object.assign(p, { qty: d.qty || 0, unit: d.unit, location: loc }); put('pantryItems', p); }
+        setKeep(byId('ingredients', p.ingredientId), d);
         return closeModal();
       }
       const name = String(d.name || '').trim();
@@ -2281,6 +2323,7 @@
       const unit = d.unit || ing.defaultUnit || 'each';
       if (d.location && !ing.location) { ing.location = d.location; put('ingredients', ing); }
       pantryAdd(ing.id, d.qty || 0, unit, d.location || ing.location || '');
+      setKeep(ing, d);
       closeModal();
     },
     'delete-pantry'() { remove('pantryItems', ui.modal.id); closeModal(); },

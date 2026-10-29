@@ -319,10 +319,11 @@
     t.ok('Freeze moved them', (await c.larder()).includes(`🍲bol×2@Freezer`));
     await c.click('[data-action="add-to"][data-slot="snack"]', 60);
     await c.click('#modal [data-action="pick-recipe"][data-id="bol"]', 60);
-    const before = (await c.larder()).filter(x => x.startsWith('🍲'));
+    const fridgeN = async () => (await c.all('pantryItems')).filter(p => p.recipeId === 'bol' && p.location === 'Fridge').reduce((n, p) => n + p.qty, 0);
+    const before = await fridgeN(), ingBefore = (await c.larder()).filter(x => !x.startsWith('🍲'));
     await c.click('[data-action="save-log"]', 150);
-    const after = (await c.larder()).filter(x => x.startsWith('🍲'));
-    t.ok('+ Add food Bolognese takes a fridge portion, no ingredients', before.includes('🍲bol×1@Fridge') && !after.some(x => x.includes('@Fridge')), { before, after });
+    const after = await fridgeN(), ingAfter = (await c.larder()).filter(x => !x.startsWith('🍲'));
+    t.ok('+ Add food Bolognese takes a fridge portion, no ingredients', before >= 1 && after === before - 1 && JSON.stringify(ingAfter) === JSON.stringify(ingBefore), { before, after });
     await c.go(day(7));
     await c.click(c.card('dinner').querySelector('[data-action="meal-menu"]'), 60);
     await c.click('[data-action="cook-ahead"]', 80);
@@ -418,6 +419,61 @@
     await c.set('#modal [data-m="draft.boughtQty"]', '2.35'); await c.set('#modal [data-m="draft.boughtUnit"]', 'kg');
     await c.click('[data-action="save-item"]', 150);
     t.eq('Bought 2.35 kg: the larder holds what was actually bought', (await c.larder()).filter(x => x.startsWith('bulg')), ['bulg:2350g@']);
+  });
+
+  scenario('Kitty litter: "Keep at least" tops up the list (2.4.0)', async (c, t) => {
+    await c.importJson(patch({
+      ingredients: [mk('litter', { name: 'Kitty litter', defaultUnit: 'bag', store: 'Pet shop', aisle: '', location: 'Pantry Ground' }),
+        mk('rice2', { name: 'Basmati rice', defaultUnit: 'g', store: 'Supermarket', aisle: '3', packQty: 1, packUnit: 'kg', keepQty: 2, keepUnit: 'kg' }),
+        mk('junk2', { name: 'Junk keep', defaultUnit: 'g', store: 'Supermarket', aisle: '', keepQty: 'lots', keepUnit: 3 })],
+      recipes: [mk('rb', { name: 'Rice bowl XL', servings: 1, proteinPerServingG: 30, lactose: 'none', tags: [], method: '',
+        ingredients: [{ ingredientId: 'rice2', qty: 1200, unit: 'g' }] })],
+      weekPlans: [weekPlan('wk0', 0, { 1: { dinner: { recipeId: 'rb', servings: 1, cook: null } } })],
+      pantryItems: [mk('pl', { ingredientId: 'litter', qty: 2, unit: 'bag', location: 'Pantry Ground' }),
+        mk('pr', { ingredientId: 'rice2', qty: 1.5, unit: 'kg', location: 'Pantry Shelf 1' })],
+    }));
+    const junk = (await c.all('ingredients')).find(i => i.id === 'junk2');
+    t.eq('Junk "Keep at least" dropped, record kept', junk ? [junk.keepQty, junk.keepUnit].map(v => v === undefined ? 'dropped' : v) : 'rejected', ['dropped', 'dropped']);
+    // Set it from the Larder, where the stock is.
+    await c.tab('pantry');
+    await c.click(c.loc('Pantry Ground').querySelector('[data-action="edit-pantry"]'));
+    await c.set('#modal [data-m="draft.keepQty"]', '2');
+    t.eq('Unit offers bag', c.$('#modal [data-m="draft.keepUnit"]').value, 'bag');
+    await c.click('[data-action="save-pantry"]', 150);
+    const lit = (await c.all('ingredients')).find(i => i.id === 'litter');
+    t.eq('Saved on the item: keep at least 2 bags', [lit.keepQty, lit.keepUnit], [2, 'bag']);
+    await c.shop(day(0)); await c.click('[data-action="regenerate"]', 300);
+    t.eq('2 bags in the Larder: nothing to buy', c.shopText('Kitty litter'), '(no line)');
+    t.has('Rice: 1.2 kg for the bowl + keep 2 kg − 1.5 kg on hand = 2 × 1 kg', c.shopText('Basmati rice'), '2 × 1 kg');
+    t.has('…and says why', c.shopText('Basmati rice'), 'keep at least 2 kg');
+    // Finish a bag.
+    await c.tab('pantry');
+    await c.click(c.loc('Pantry Ground').querySelector('[data-action="pantry-step"][data-d="-1"]'), 120);
+    t.has('Larder flags it: below 2 bag', c.loc('Pantry Ground').innerText, 'below 2 bag');
+    await c.shop(day(0)); await c.click('[data-action="regenerate"]', 300);
+    t.eq('Down to 1: one bag goes on the list', c.shopText('Kitty litter').split(' | ').slice(0, 2), ['Kitty litter', '1 bag']);
+    t.has('…marked keep at least', c.shopText('Kitty litter'), 'keep at least 2 bag');
+    t.has('Now doc mentions the minimum', c.w.__mp.nowDoc(), 'Kitty litter 1 bag (keep at least 2 bag, below it)');
+    await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
+    t.eq('Next week\'s list doesn\'t add it again', c.shopText('Kitty litter'), '(no line)');
+    await c.shop(day(0));
+    await c.click(c.shopRow('Kitty litter').querySelector('[data-action="tick"]'), 150);
+    t.ok('Bought: back to 2 bags', (await c.larder()).includes('litter:2bag@Pantry Ground'), await c.larder());
+    await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
+    t.eq('Next week still nothing', c.shopText('Kitty litter'), '(no line)');
+    // Clearing it.
+    await c.tab('pantry');
+    await c.click(c.loc('Pantry Ground').querySelector('[data-action="edit-pantry"]'));
+    await c.set('#modal [data-m="draft.keepQty"]', '');
+    await c.click('[data-action="save-pantry"]', 150);
+    t.eq('Blank clears it', (await c.all('ingredients')).find(i => i.id === 'litter').keepQty, undefined);
+    // A week with no meals planned still gets its top-ups.
+    await c.tab('pantry');
+    await c.click(c.loc('Pantry Ground').querySelector('[data-action="edit-pantry"]'));
+    await c.set('#modal [data-m="draft.keepQty"]', '3');
+    await c.click('[data-action="save-pantry"]', 150);
+    await c.shop(day(14)); await c.click('[data-action="regenerate"]', 300);
+    t.eq('Nothing planned in 2 weeks: still tops up to 3', c.shopText('Kitty litter').split(' | ').slice(0, 2), ['Kitty litter', '1 bag']);
   });
 
   scenario('Pepsi Max: one item in two places (2.0.2)', async (c, t) => {
