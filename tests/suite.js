@@ -434,6 +434,16 @@
     }));
     const junk = (await c.all('ingredients')).find(i => i.id === 'junk2');
     t.eq('Junk "Keep at least" dropped, record kept', junk ? [junk.keepQty, junk.keepUnit].map(v => v === undefined ? 'dropped' : v) : 'rejected', ['dropped', 'dropped']);
+    // Name suggestions are the app's own (no <datalist>, whose popup Android Chrome left floating after a redraw).
+    await c.tab('pantry'); await c.click('[data-action="add-pantry"]');
+    const nameBox = c.$('#modal [data-m="draft.name"]');
+    nameBox.value = 'kit'; nameBox.dispatchEvent(new c.w.Event('input', { bubbles: true })); await sleep(40);
+    t.eq('Typing "kit" suggests Kitty litter', c.$$('#modal .suggest button').map(b => b.innerText), ['Kitty litter']);
+    t.ok('No native datalist anywhere in the sheet', !c.$('#modal datalist') && !c.$('#modal input[list]'));
+    await c.click(c.$('#modal .suggest button'), 150);
+    t.eq('Tapping it fills the name, unit and location', [c.$('#modal [data-m="draft.name"]').value, c.$('#modal [data-m="draft.unit"]').value,
+      c.$('#modal [data-m="draft.location"]').value, !!c.$('#modal .suggest')], ['Kitty litter', 'bag', 'Pantry Ground', false]);
+    await c.click('[data-action="close-modal"]');
     // Set it from the Larder, where the stock is.
     await c.tab('pantry');
     await c.click(c.loc('Pantry Ground').querySelector('[data-action="edit-pantry"]'));

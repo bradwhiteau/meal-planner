@@ -2,6 +2,11 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.4.2
+
+- Fix: name and aisle suggestions are now the app's own list under the box. Android Chrome's built-in suggestion pop-up
+  could be left floating on screen (even after Save) when a sheet redrew under it; the built-in list is no longer used.
+
 ## 2.4.1
 
 - **Search the larder:** a search box under the Larder buttons. Typing shows only matching items (and prepared meals), hides

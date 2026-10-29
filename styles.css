@@ -169,6 +169,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 .ing-row { display: grid; grid-template-columns: 1fr 4.6em 4.6em 40px; gap: 6px; margin: 6px 0; align-items: center; }
 .ing-row input { padding: 8px; }
 .ing-row .x { height: 40px; border: 0; background: none; color: var(--muted); font-size: 1.2rem; }
+.ing-row .suggest { grid-column: 1 / -1; grid-row: 2; margin-top: 0; }
 .method { white-space: pre-wrap; color: var(--muted); }
 .ing-list { margin: 6px 0; padding-left: 18px; }
 
@@ -249,6 +250,10 @@ body.viewer .edit-only { display: none !important; }
 .pick-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border);
   background: var(--surface-2); color: var(--text); padding: 12px; min-height: 48px; font-size: .98rem; }
 .pick-row:last-child { border-bottom: 0; }
+.suggest { display: flex; flex-direction: column; margin-top: 4px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface-2); }
+.suggest button { text-align: left; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--border); background: none; color: inherit; font: inherit; }
+.suggest button:last-child { border-bottom: 0; }
+.suggest button:active { background: color-mix(in srgb, var(--accent) 20%, var(--surface-2)); }
 .pick-row:active { background: color-mix(in srgb, var(--accent) 20%, var(--surface-2)); }
 .pick-row .grow, .picked .grow { flex: 1; min-width: 0; }
 .pick-head { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);

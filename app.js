@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.4.1';
+  const APP_VERSION = '2.4.2';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1321,7 +1321,6 @@
         <div id="pick-list" class="pick-list">${pickRows(m)}</div>`;
     return `<div class="field"><span>Recipe</span>${inner}</div>`;
   }
-  const ingDatalist = () => `<datalist id="ing-names">${sortByName(S.ingredients).map(i => `<option value="${esc(i.name)}">`).join('')}</datalist>`;
   // Units that work for an ingredient: the ones its recipes, pack and usual unit use (with g/kg or ml/L both offered
   // for weighed or measured things). A new item gets a standard list. A unit already set that doesn't match is kept,
   // labelled, so it can be fixed rather than silently changed.
@@ -1345,7 +1344,21 @@
   const storeSelect = (m, cur) => `<select data-m="${m}">${[...new Set([...settings.stores, cur].filter(Boolean))].map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
   // A bare number (or number + letter) reads as "Aisle 13"; named aisles show as they are.
   const aisleLabel = a => (/^\d+[a-z]?$/i.test(String(a || '').trim()) ? `Aisle ${String(a).trim()}` : a);
-  const aisleList = () => `<datalist id="aisles">${[...new Set(S.ingredients.map(i => i.aisle).filter(Boolean))].sort().map(a => `<option value="${esc(a)}">`).join('')}</datalist>`;
+  // Suggestions under name and aisle fields, drawn by the app. (Not <datalist>: Android Chrome leaves its popup
+  // floating on screen when the sheet redraws or closes under it.) Tapping one fills the field as if typed.
+  const SUGGEST = {
+    ing: () => sortByName(S.ingredients).map(i => i.name),
+    aisle: () => [...new Set(S.ingredients.map(i => i.aisle).filter(Boolean))].sort(),
+  };
+  function showSuggest(input) {
+    const next = input.nextElementSibling;
+    if (next && next.classList.contains('suggest')) next.remove();
+    const q = input.value.trim().toLowerCase(), list = SUGGEST[input.dataset.suggest];
+    if (!q || !list) return;
+    const hits = list().filter(n => n.toLowerCase().includes(q) && n.toLowerCase() !== q)
+      .sort((a, b) => b.toLowerCase().startsWith(q) - a.toLowerCase().startsWith(q)).slice(0, 6);
+    if (hits.length) input.insertAdjacentHTML('afterend', `<div class="suggest">${hits.map(n => `<button type="button" data-action="suggest-pick" data-v="${esc(n)}">${esc(n)}</button>`).join('')}</div>`);
+  }
 
   function render() {
     document.body.classList.toggle('viewer', isViewer());
@@ -1871,14 +1884,13 @@
         ${field('Tags', `<div class="tags">${TAGS.map(t => `<button class="chip ${d.tags.includes(t) ? 'on' : ''}" data-action="toggle-tag" data-tag="${esc(t)}">${t}</button>`).join('')}</div>`)}
         <div class="field"><span>Ingredients (for the whole recipe)</span>
           ${d.ingredients.map((x, i) => `<div class="ing-row">
-            <input type="text" list="ing-names" data-m="draft.ingredients.${i}.name" data-rerender value="${esc(x.name)}" placeholder="Ingredient">
+            <input type="text" data-suggest="ing" data-m="draft.ingredients.${i}.name" data-rerender value="${esc(x.name)}" placeholder="Ingredient">
             <input type="number" inputmode="decimal" data-m="draft.ingredients.${i}.qty" data-type="num" value="${esc(x.qty == null ? '' : x.qty)}" placeholder="Qty">
             <input type="text" data-m="draft.ingredients.${i}.unit" value="${esc(x.unit)}" placeholder="g">
             <button class="x" data-action="del-ing" data-i="${i}" aria-label="Remove">✕</button></div>`).join('')}
           <button class="btn small" data-action="add-ing">+ Ingredient</button>
           <p class="muted">Units: g, kg, ml, L, or anything else (each, tin, pack). New names create a new ingredient.</p></div>
         ${field('Method', `<textarea rows="4" data-m="draft.method">${esc(d.method)}</textarea>`)}
-        ${ingDatalist()}
         <div class="row"><button class="btn primary" data-action="save-recipe">Save</button>
           ${m.id ? `<button class="btn danger" data-action="delete-recipe">Delete</button>` : ''}${cancelBtn()}</div>`;
     },
@@ -1887,7 +1899,7 @@
       return `<h2>${esc(d.name || 'Ingredient')}</h2>
         ${field('Name', `<input type="text" data-m="draft.name" value="${esc(d.name)}">`)}
         <div class="row">${field('Store', storeSelect('draft.store', d.store))}
-          ${field('Aisle', `<input type="text" list="aisles" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
+          ${field('Aisle', `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
         <div class="row">${field('Larder location', locationSelect('draft.location', d.location || ''))}
           ${field('Recipe unit', `<input type="text" data-m="draft.defaultUnit" value="${esc(d.defaultUnit)}">`)}</div>
         <div class="row">${field('Pack size', `<input type="number" inputmode="decimal" data-m="draft.packQty" data-type="num" data-rerender value="${esc(d.packQty == null ? '' : d.packQty)}" placeholder="e.g. 1">`)}
@@ -1896,7 +1908,6 @@
             : field('Last price ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.lastPrice" data-type="num" value="${esc(d.lastPrice == null ? '' : d.lastPrice)}">`)}</div>
         <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local (bought from a local producer)</label>
         <p class="muted">With a pack size, the shopping list buys whole packs and prices them per pack.</p>
-        ${aisleList()}
         <div class="row"><button class="btn primary" data-action="save-ingredient">Save</button>
           <button class="btn danger" data-action="delete-ingredient">Delete</button>${cancelBtn()}</div>`;
     },
@@ -1904,15 +1915,14 @@
       const d = m.draft, ing = d.ingredientId && byId('ingredients', d.ingredientId);
       if (!ing) {
         return `<h2>${m.id ? esc(d.text) : 'Add to list'}</h2>
-          ${field('Item', `<input type="text" list="ing-names" data-m="draft.text" value="${esc(d.text)}" placeholder="e.g. Dishwashing liquid">`)}
+          ${field('Item', `<input type="text" data-suggest="ing" data-m="draft.text" value="${esc(d.text)}" placeholder="e.g. Dishwashing liquid">`)}
           <div class="row">${field('Qty', `<input type="number" inputmode="decimal" data-m="draft.qty" data-type="num" value="${esc(d.qty == null ? '' : d.qty)}">`)}
             ${field('Unit', `<input type="text" data-m="draft.unit" value="${esc(d.unit)}">`)}
             ${field('Price ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.price" data-type="num" value="${esc(d.price == null ? '' : d.price)}">`)}</div>
           <div class="row">${field('Store', storeSelect('draft.store', d.store))}
-            ${field('Aisle', `<input type="text" list="aisles" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
+            ${field('Aisle', `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
           <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local</label>
           <p class="muted">An item that matches an ingredient's name goes into the larder when ticked.</p>
-          ${ingDatalist()}${aisleList()}
           <div class="row"><button class="btn primary" data-action="save-item">Save</button>
             ${m.id ? `<button class="btn danger" data-action="delete-item">Remove</button>` : ''}${cancelBtn()}</div>`;
       }
@@ -1925,24 +1935,22 @@
           ${field('Unit', unitSelect('draft.boughtUnit', ing, d.boughtUnit || ''))}
           ${field('Price ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.price" data-type="num" value="${esc(d.price == null ? '' : d.price)}">`)}</div>
         <div class="row">${field('Store', storeSelect('draft.store', d.store))}
-          ${field('Aisle', `<input type="text" list="aisles" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
+          ${field('Aisle', `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
         <div class="row">${field('Larder location', locationSelect('draft.location', d.location || ''))}</div>
         <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local</label>
         <p class="muted">Price is what this line cost. Pack size, price, store, aisle and location are saved to the ingredient, so future lists buy whole packs at the right price. Ticking puts what you bought in the larder.</p>
-        ${aisleList()}
         <div class="row"><button class="btn primary" data-action="save-item">Save</button>${cancelBtn()}</div>`;
     },
     pantry(m) {
       const d = m.draft;
       return `<h2>${m.id ? esc(ingName(d.ingredientId)) : 'Add to larder'}</h2>
-        ${m.id ? '' : field('Item', `<input type="text" list="ing-names" data-m="draft.name" data-rerender value="${esc(d.name)}" placeholder="e.g. Rolled oats">`)}
+        ${m.id ? '' : field('Item', `<input type="text" data-suggest="ing" data-m="draft.name" data-rerender value="${esc(d.name)}" placeholder="e.g. Rolled oats">`)}
         <div class="row">${field('Amount on hand', `<input type="number" inputmode="decimal" data-m="draft.qty" data-type="num" value="${esc(d.qty == null ? '' : d.qty)}">`)}
           ${field('Unit', unitSelect('draft.unit', m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || ''), d.unit))}</div>
         <div class="row">${field('Location', locationSelect('draft.location', d.location || ''))}</div>
         <div class="row">${field('Keep at least', `<input type="number" inputmode="decimal" data-m="draft.keepQty" data-type="num" value="${esc(d.keepQty == null ? '' : d.keepQty)}" placeholder="no minimum">`)}
           ${field('Unit', unitSelect('draft.keepUnit', m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || ''), d.keepUnit || d.unit))}</div>
         <p class="muted">Keep at least: counted across every location. When what's left after the week's meals would drop below it, the shopping list tops it up.</p>
-        ${ingDatalist()}
         <div class="row"><button class="btn primary" data-action="save-pantry">Save</button>
           ${m.id ? `<button class="btn danger" data-action="delete-pantry">Remove from larder</button>` : ''}${cancelBtn()}</div>`;
     },
@@ -2041,6 +2049,13 @@
   const actions = {
     view(el) { ui.view = el.dataset.view; ui.modal = null; if (ui.view === 'today') ui.date = ui.today; render(); window.scrollTo(0, 0); },
     menu() { openModal({ type: 'menu' }); },
+    'suggest-pick'(el) {
+      const box = el.parentElement, input = box.previousElementSibling;
+      box.remove();
+      input.value = el.dataset.v;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    },
     'close-modal'() { closeModal(); },
     'pick-recipe'(el) {
       const m = ui.modal, id = el.dataset.id;
@@ -2602,6 +2617,13 @@
     }
   }
   document.addEventListener('input', onField);
+  document.addEventListener('input', e => { if (e.target.dataset && e.target.dataset.suggest) showSuggest(e.target); });
+  // Tapping a suggestion mustn't take focus from the field first (its change event would redraw the sheet mid-tap).
+  document.addEventListener('mousedown', e => { if (e.target.closest && e.target.closest('.suggest')) e.preventDefault(); });
+  // Suggestions go away when you move to another field.
+  document.addEventListener('focusin', e => {
+    document.querySelectorAll('.suggest').forEach(x => { if (!x.contains(e.target) && x.previousElementSibling !== e.target) x.remove(); });
+  });
   // <details> toggles don't bubble, so listen in the capture phase.
   document.addEventListener('toggle', e => {
     const el = e.target;
