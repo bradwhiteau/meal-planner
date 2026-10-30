@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.4.3';
+  const APP_VERSION = '2.5.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -134,6 +134,10 @@
     settings = S.settings.find(x => x.id === 'settings');
     settings.reminderTimes = { ...DEFAULT_SETTINGS.reminderTimes, ...(settings.reminderTimes || {}) };
     if (!Array.isArray(settings.locations)) settings.locations = [...DEFAULT_SETTINGS.locations];
+    // 2.5.0: meals hold lists of items. Older plans and logs are brought up to date once, here.
+    const plans = S.weekPlans.filter(p => Array.isArray(p.days) && normPlan(p));
+    if (plans.length) await write('weekPlans', plans);
+    await normLogs();
   }
   const saveSettings = () => put('settings', settings);
 
@@ -159,16 +163,69 @@
     };
   }
   const viewPlan = weekStart => planFor(weekStart) || blankPlan(weekStart);
-  const planIsEmpty = p => p.days.every(d => !Object.keys(d.slots).length);
+  const planIsEmpty = p => p.days.every(d => SLOTS.every(k => !itemsOf(d, k).length));
   function locateDay(date) {
     const plan = viewPlan(mondayOf(date));
     return { plan, i: plan.days.findIndex(d => d.date === date) };
   }
+  // A meal holds a list of items (a shake and eggs), each with an `id` that meal logs and leftovers point at.
+  // Before 2.5.0 a meal held one item; normPlan turns that (and any patch still written that way) into a list of one.
+  function itemsOf(day, k) { const v = day && day.slots[k]; return Array.isArray(v) ? v : []; }
+  const findItem = (day, k, id) => itemsOf(day, k).find(x => x.id === id) || null;
+  const itemKey = (date, k, id) => `${date}|${k}|${id}`;
+  const newItemId = () => Math.random().toString(36).slice(2, 8);
+  // Every item in a plan, by day and meal: { d: the day, i: its index, k: the meal, x: the item }.
+  function planItems(plan) {
+    const out = [];
+    if (plan) plan.days.forEach((d, i) => SLOTS.forEach(k => itemsOf(d, k).forEach(x => out.push({ d, i, k, x }))));
+    return out;
+  }
+  const sameItem = (a, b) => (a.recipeId ? a.recipeId === b.recipeId : a.text != null ? a.text === b.text
+    : !!(a.leftoverOf && b.leftoverOf && a.leftoverOf.day === b.leftoverOf.day && a.leftoverOf.slot === b.leftoverOf.slot));
+  // Makes every meal a list of items with ids; returns true if anything changed. An item arriving without an id (a
+  // patch rewriting the week) keeps the id of the matching item already in that meal, so ticks stay attached.
+  // Leftovers without an item mean the first item of that meal.
+  function normPlan(p, old) {
+    let changed = false;
+    p.days.forEach((d, di) => {
+      if (!d.slots || typeof d.slots !== 'object' || Array.isArray(d.slots)) { d.slots = {}; changed = true; }
+      for (const k of Object.keys(d.slots)) {
+        const was = d.slots[k], list = (Array.isArray(was) ? was : [was]).filter(x => x && typeof x === 'object' && !Array.isArray(x));
+        if (!Array.isArray(was) || list.length !== was.length) changed = true;
+        const seen = new Set(), prev = old && old.days && old.days[di] ? itemsOf(old.days[di], k) : [];
+        list.forEach(x => {
+          if (typeof x.id !== 'string' || !x.id || seen.has(x.id)) {
+            const match = prev.find(o => !seen.has(o.id) && !list.some(y => y.id === o.id) && sameItem(x, o));
+            x.id = match ? match.id : newItemId(); changed = true;
+          }
+          seen.add(x.id);
+        });
+        if (list.length) d.slots[k] = list; else delete d.slots[k];
+      }
+    });
+    p.days.forEach(d => Object.values(d.slots).forEach(list => list.forEach(x => {
+      const o = x.leftoverOf;
+      if (o && typeof o === 'object' && !o.item) { const src = itemsOf(p.days[o.day], o.slot)[0]; if (src) { o.item = src.id; changed = true; } }
+    })));
+    return changed;
+  }
+  // Planned meal logs name the item they ticked off. Older ones (and patched ones without it) mean the first item in
+  // that meal not already ticked.
+  function normLogs() {
+    const fixed = [];
+    for (const l of S.mealLogs) {
+      if (l.extra || l.item || !SLOTS.includes(l.slot)) continue;
+      const { plan, i } = locateDay(l.date);
+      const x = i >= 0 && itemsOf(plan.days[i], l.slot).find(x => !S.mealLogs.some(o => o !== l && !o.extra && o.date === l.date && o.slot === l.slot && o.item === x.id));
+      if (x) { l.item = x.id; fixed.push(l); }
+    }
+    return fixed.length ? write('mealLogs', fixed) : Promise.resolve();
+  }
   // Copies days (training + slots) from a week or template onto a week's dates.
-  // A slot's `cooked` record belongs to that day's cook; copies of a week (or templates) start uncooked.
+  // An item's `cooked` record belongs to that day's cook; copies of a week (or templates) start uncooked.
   function freshSlots(slots) {
     const out = clone(slots);
-    Object.values(out).forEach(x => { if (x) delete x.cooked; });
+    Object.values(out).forEach(list => (Array.isArray(list) ? list : []).forEach(x => { if (x) delete x.cooked; }));
     return out;
   }
   function applyDays(weekStart, days) {
@@ -177,19 +234,15 @@
     put('weekPlans', plan);
   }
 
-  // Later slots in the same week eating leftovers of this one.
-  function leftoverSlots(plan, dayIdx, key) {
-    const out = [];
-    plan.days.forEach((d, i) => SLOTS.forEach(k => {
-      const x = d.slots[k];
-      if (x && x.leftoverOf && x.leftoverOf.day === dayIdx && x.leftoverOf.slot === key) out.push({ day: i, slot: k, servings: x.servings || 1 });
-    }));
-    return out;
+  // Later items in the same week eating leftovers of this one.
+  function leftoverSlots(plan, dayIdx, key, id) {
+    return planItems(plan).filter(({ x }) => id && x.leftoverOf && x.leftoverOf.day === dayIdx && x.leftoverOf.slot === key && x.leftoverOf.item === id)
+      .map(({ i, k, x }) => ({ day: i, slot: k, servings: x.servings || 1 }));
   }
-  // What a cook slot makes when "Servings to cook" is left blank: this meal plus its leftovers in the plan.
+  // What a cook item makes when "Servings to cook" is left blank: this meal plus its leftovers in the plan.
   // Batch recipes cook at least the whole recipe (the spare goes to the freezer).
-  function plannedCook(plan, dayIdx, key, recipe, servings) {
-    const planned = servings + leftoverSlots(plan, dayIdx, key).reduce((t, x) => t + x.servings, 0);
+  function plannedCook(plan, dayIdx, key, id, recipe, servings) {
+    const planned = servings + leftoverSlots(plan, dayIdx, key, id).reduce((t, x) => t + x.servings, 0);
     return (recipe.tags || []).includes('batch') ? Math.max(planned, recipe.servings || 1) : planned;
   }
   // The note under a meal that cooks more than it eats: where the rest goes.
@@ -203,12 +256,11 @@
     return parts.join(' · ');
   }
 
-  // What a slot means for display, logging and protein.
-  function resolveSlot(plan, dayIdx, key) {
-    const day = plan.days[dayIdx], s = day && day.slots[key];
+  // What a planned item means for display, logging and protein.
+  function resolveItem(plan, dayIdx, key, s) {
     if (!s) return null;
     if (s.leftoverOf) {
-      const srcDay = plan.days[s.leftoverOf.day], src = srcDay && srcDay.slots[s.leftoverOf.slot];
+      const src = findItem(plan.days[s.leftoverOf.day], s.leftoverOf.slot, s.leftoverOf.item);
       const r = src && src.recipeId ? byId('recipes', src.recipeId) : null;
       const n = s.servings || 1;
       return {
@@ -220,8 +272,8 @@
     if (s.recipeId) {
       const r = byId('recipes', s.recipeId), n = s.servings || 1;
       if (!r) return { kind: 'text', label: '(deleted recipe)', servings: n, protein: null, sub: '' };
-      const leftovers = leftoverSlots(plan, dayIdx, key), planned = n + leftovers.reduce((t, x) => t + x.servings, 0);
-      const fixed = Number(s.cook) > 0, cook = fixed ? Number(s.cook) : plannedCook(plan, dayIdx, key, r, n);
+      const leftovers = leftoverSlots(plan, dayIdx, key, s.id), planned = n + leftovers.reduce((t, x) => t + x.servings, 0);
+      const fixed = Number(s.cook) > 0, cook = fixed ? Number(s.cook) : plannedCook(plan, dayIdx, key, s.id, r, n);
       // A typed cook amount, or a batch recipe cooking past the plan, cooks in full whenever anything is uncovered.
       return { kind: 'recipe', recipe: r, servings: n, label: r.name, sub: n !== 1 ? `${n} servings` : '', cook,
         cookFixed: fixed || cook > planned, leftovers,
@@ -231,7 +283,7 @@
   }
   function plannedProtein(plan, i) {
     let total = 0, unknown = false;
-    for (const k of SLOTS) { const r = resolveSlot(plan, i, k); if (!r) continue; if (r.protein == null) unknown = true; else total += r.protein; }
+    for (const k of SLOTS) for (const x of itemsOf(plan.days[i], k)) { const r = resolveItem(plan, i, k, x); if (r.protein == null) unknown = true; else total += r.protein; }
     return { total, unknown };
   }
 
@@ -256,21 +308,21 @@
   // What still has to be bought for a week: ingredients of meals not yet cooked (scaled by servings cooked),
   // minus what's in the larder now. Meals already logged are skipped: their ingredients have left the larder
   // (or, if swapped or skipped, they were never cooked).
-  const loggedSlots = () => new Set(S.mealLogs.filter(l => !l.extra).map(l => l.date + '|' + l.slot));
+  const loggedItems = () => new Set(S.mealLogs.filter(l => !l.extra && l.item).map(l => itemKey(l.date, l.slot, l.item)));
   // How a week's meals are covered. Per recipe: servings still to eat, portions already in the Larder, and how
   // much each uncooked cook slot should cook. Batch recipes (tag "batch") cook the full batch whenever anything is
   // uncovered, and the spare goes to the freezer; other recipes cook only what the Larder doesn't cover.
   // Servings still to eat per recipe in a week (meals not yet logged), with its uncooked cook slots.
   function weekMeals(week) {
-    const plan = planFor(week), done = loggedSlots(), byRecipe = new Map();
-    if (plan) plan.days.forEach((day, i) => SLOTS.forEach(k => {
-      const r = resolveSlot(plan, i, k);
-      if (!r || !r.recipe || !day.date || done.has(day.date + '|' + k)) return;
+    const plan = planFor(week), done = loggedItems(), byRecipe = new Map();
+    planItems(plan).forEach(({ d: day, i, k, x }) => {
+      const r = resolveItem(plan, i, k, x), key = itemKey(day.date, k, x.id);
+      if (!r.recipe || !day.date || done.has(key)) return;
       const m = byRecipe.get(r.recipe.id) || { recipe: r.recipe, needed: 0, cookSlots: [] };
-      if (r.kind === 'recipe' && !day.slots[k].cooked) m.cookSlots.push({ key: day.date + '|' + k, cook: r.cook, fixed: r.cookFixed });
+      if (r.kind === 'recipe' && !x.cooked) m.cookSlots.push({ key, cook: r.cook, fixed: r.cookFixed });
       m.needed += r.servings;
       byRecipe.set(r.recipe.id, m);
-    }));
+    });
     return byRecipe;
   }
   // Portions free for a week's meals: those in the Larder now, plus the spares earlier weeks (from this week on)
@@ -304,9 +356,9 @@
   }
   function needsFor(week) {
     const plan = planFor(week), need = new Map(), { slotCook } = weekAlloc(week);
-    if (plan) for (const day of plan.days) for (const k of SLOTS) {
-      const s = day.slots[k]; if (!s || !s.recipeId) continue;
-      const amt = slotCook[day.date + '|' + k];
+    for (const { d: day, k, x: s } of planItems(plan)) {
+      if (!s.recipeId) continue;
+      const amt = slotCook[itemKey(day.date, k, s.id)];
       if (!(amt > 0)) continue;     // already cooked, eaten, or covered by portions in the Larder
       const r = byId('recipes', s.recipeId); if (!r) continue;
       const f = amt / (r.servings || 1);
@@ -509,8 +561,8 @@
   }
 
   // Cooking: ingredients out, portions in. The slot keeps a `cooked` record so Undo is exact.
-  function doCook(date, k, recipe, made, eatNow, alloc) {
-    const { plan, i } = locateDay(date), sl = plan.days[i].slots[k];
+  function doCook(date, k, id, recipe, made, eatNow, alloc) {
+    const { plan, i } = locateDay(date), sl = findItem(plan.days[i], k, id);
     const used = drawRecipe(recipe.id, made / (recipe.servings || 1)), added = [];
     for (const [loc, n] of Object.entries(alloc || {})) {
       if (n > 0) { addPortions(recipe.id, n, loc, date); added.push({ recipeId: recipe.id, qty: n, location: loc, cookedOn: date }); }
@@ -518,12 +570,12 @@
     sl.cooked = { on: date, made, pantryUsed: used, portionsAdded: added };
     put('weekPlans', plan);
     if (eatNow > 0) {
-      addLog({ date, slot: k, recipeId: recipe.id, servings: eatNow, planned: true, cookedSlot: true,
+      addLog({ date, slot: k, item: id, recipeId: recipe.id, servings: eatNow, planned: true, cookedSlot: true,
         proteinG: recipe.proteinPerServingG != null ? round(recipe.proteinPerServingG * eatNow) : null });
     }
   }
-  function undoCook(date, k) {
-    const { plan, i } = locateDay(date), sl = i >= 0 && plan.days[i].slots[k];
+  function undoCook(date, k, id) {
+    const { plan, i } = locateDay(date), sl = i >= 0 && findItem(plan.days[i], k, id);
     if (!sl || !sl.cooked) return;
     returnUsed(sl.cooked);
     (sl.cooked.portionsAdded || []).forEach(a => {
@@ -534,27 +586,27 @@
     put('weekPlans', plan);
   }
   // Servings of this recipe the next 3 days' meals will want from the fridge (beyond what's already there).
-  function servingsSoon(recipeId, date, k) {
-    const done = loggedSlots();
+  function servingsSoon(recipeId, date, k, id) {
+    const done = loggedItems();
     let n = 0;
     for (let d = 0; d < 3; d++) {
       const dt = addDays(date, d), { plan, i } = locateDay(dt);
       if (i < 0) continue;
-      for (const kk of SLOTS) {
-        if ((dt === date && kk === k) || done.has(dt + '|' + kk)) continue;
-        const r = resolveSlot(plan, i, kk);
-        if (r && r.recipe && r.recipe.id === recipeId) n += r.servings;
+      for (const kk of SLOTS) for (const x of itemsOf(plan.days[i], kk)) {
+        if ((dt === date && kk === k && x.id === id) || done.has(itemKey(dt, kk, x.id))) continue;
+        const r = resolveItem(plan, i, kk, x);
+        if (r.recipe && r.recipe.id === recipeId) n += r.servings;
       }
     }
     const inFridge = portionRows(recipeId).filter(x => isFridge(x.location)).reduce((t, x) => t + Number(x.qty), 0);
     return Math.max(0, n - inFridge);
   }
-  function openCook(date, k, recipe, made, eatNow) {
-    const rest = Math.max(0, made - eatNow), toFridge = Math.min(rest, servingsSoon(recipe.id, date, k)), alloc = {};
+  function openCook(date, k, id, recipe, made, eatNow) {
+    const rest = Math.max(0, made - eatNow), toFridge = Math.min(rest, servingsSoon(recipe.id, date, k, id)), alloc = {};
     coldLocations().forEach(l => { alloc[l] = 0; });
     alloc[fridgeLoc()] = (alloc[fridgeLoc()] || 0) + toFridge;
     alloc[freezerLoc()] = (alloc[freezerLoc()] || 0) + rest - toFridge;
-    openModal({ type: 'cook', date, slot: k, recipeId: recipe.id, made, eatNow, alloc });
+    openModal({ type: 'cook', date, slot: k, item: id, recipeId: recipe.id, made, eatNow, alloc });
   }
   function homeIngredient(key, name, unit) {
     let ing = S.ingredients.find(i => i.pantryKey === key) || ingByName(name);
@@ -568,18 +620,16 @@
   function nightBeforeTasks(date) {
     const tmr = addDays(date, 1), { plan, i } = locateDay(tmr), out = [];
     if (i < 0) return out;
-    const alloc = weekAlloc(mondayOf(tmr)), done = loggedSlots(), want = new Map();
-    for (const k of SLOTS) {
-      const r = resolveSlot(plan, i, k);
-      if (!r) continue;
+    const alloc = weekAlloc(mondayOf(tmr)), done = loggedItems(), want = new Map();
+    for (const k of SLOTS) for (const x of itemsOf(plan.days[i], k)) {
+      const r = resolveItem(plan, i, k, x), key = itemKey(tmr, k, x.id);
       if (k === 'breakfast' && r.kind === 'recipe' && r.recipe.tags.includes('rice cooker'))
         out.push({ key: 'rice', text: `Load the rice cooker for ${r.label} and set the timer` });
       // Meals eaten from cooked portions: count what tomorrow needs from the fridge.
-      const sl = plan.days[i].slots[k] || {};
-      if (r.recipe && !done.has(tmr + '|' + k) && (r.kind === 'leftover' || sl.cooked || !(alloc.slotCook[tmr + '|' + k] > 0)))
+      if (r.recipe && !done.has(key) && (r.kind === 'leftover' || x.cooked || !(alloc.slotCook[key] > 0)))
         want.set(r.recipe.id, (want.get(r.recipe.id) || 0) + r.servings);
       else if (r.kind === 'leftover' && r.freezer)
-        out.push({ key: 'freezer-' + k, text: `Move tomorrow's ${k} (${r.label}) from the freezer to the fridge` });
+        out.push({ key: `freezer-${k}-${x.id}`, text: `Move tomorrow's ${k} (${r.label}) from the freezer to the fridge` });
     }
     for (const [rid, n] of want) {
       const rows = portionRows(rid), inFridge = rows.filter(x => isFridge(x.location)).reduce((t, x) => t + Number(x.qty), 0);
@@ -593,10 +643,10 @@
     if (parseYmd(date).getDay() !== 0) return null;
     const plan = planFor(addDays(date, 1));
     const names = [];
-    if (plan) plan.days.forEach(d => SLOTS.forEach(k => {
-      const s = d.slots[k], r = s && s.recipeId && byId('recipes', s.recipeId);
+    planItems(plan).forEach(({ x }) => {
+      const r = x.recipeId && byId('recipes', x.recipeId);
       if (r && r.tags.includes('batch') && !names.includes(r.name)) names.push(r.name);
-    }));
+    });
     return { key: 'batch', text: names.length ? `Batch cook for the week: ${names.join(', ')}` : 'Sunday batch cook: plan next week, generate the list and cook the batch meals' };
   }
   function remindersFor(date) {
@@ -671,7 +721,8 @@
       app: 'meal-planner', schemaVersion: SCHEMA_VERSION, appVersion: APP_VERSION, exportedAt: nowIso(),
       description: 'Meal Planner data, one array per store. mealLogs: what was eaten (date, slot, planned vs off-plan, proteinG). ' +
         'weekPlans: Monday-start weeks (templateName set = template); day.training uses Lift Log session types (lift/walk/hiit/rest) so it joins Lift Log by date. ' +
-        'Slots hold {recipeId, servings, cook}, {leftoverOf:{day 0=Mon, slot}} or {text}. shoppingItems: per week, price in AUD for the line. Quantities are metric. ' +
+        'Each meal (day.slots.breakfast etc.) is a list of items, each with an id and one of {recipeId, servings, cook}, {leftoverOf:{day 0=Mon, slot, item}} or {text}; ' +
+        'planned mealLogs name the item they ticked (item). shoppingItems: per week, price in AUD for the line. Quantities are metric. ' +
         'pantryItems is the Larder: ingredient stock (ingredientId, qty, unit, location) and cooked portions (recipeId, qty = portions, location, cookedOn). To change data, write a patch file to the inbox; see DATA.md in the meal-planner repo.',
       stores: Object.fromEntries(STORES.map(s => [s, S[s]])),
     }, null, 2);
@@ -727,14 +778,15 @@
     weekPlans: r => {
       if (!(Array.isArray(r.days) && r.days.length === 7 && r.days.every(d => isObj(d) && isObj(d.slots))
         && (r.weekStart == null || /^\d{4}-\d{2}-\d{2}$/.test(r.weekStart)))) return false;
-      // A slot's `cooked` record must be well-formed, or it's dropped.
-      r.days.forEach(d => Object.values(d.slots).forEach(x => {
-        if (!isObj(x) || x.cooked == null) return;
+      normPlan(r, isStr(r.id) ? byId('weekPlans', r.id) : null);
+      // An item's `cooked` record must be well-formed, or it's dropped.
+      r.days.forEach(d => Object.values(d.slots).forEach(list => list.forEach(x => {
+        if (x.cooked == null) return;
         const c = x.cooked;
         if (!isObj(c) || !(Number(c.made) >= 0)) { delete x.cooked; return; }
         c.pantryUsed = Array.isArray(c.pantryUsed) ? c.pantryUsed.filter(u => isObj(u) && isStr(u.ingredientId) && Number(u.qty) > 0 && isStr(u.unit)) : [];
         c.portionsAdded = Array.isArray(c.portionsAdded) ? c.portionsAdded.filter(u => isObj(u) && isStr(u.recipeId) && Number(u.qty) > 0) : [];
-      }));
+      })));
       return true;
     },
     shoppingItems: r => {
@@ -835,6 +887,7 @@
     settings = S.settings.find(x => x.id === 'settings');
     settings.reminderTimes = { ...DEFAULT_SETTINGS.reminderTimes, ...(settings.reminderTimes || {}) };
     if (!Array.isArray(settings.locations)) settings.locations = [...DEFAULT_SETTINGS.locations];
+    await normLogs();
     if (plan.changes) markDirty();
   }
 
@@ -1102,15 +1155,18 @@
       const day = i >= 0 ? plan.days[i] : { training: '', slots: {} };
       out.push(`<h3>${e(fmtDate(date))}${n === 0 ? ' (the day this was written)' : ''}${day.training ? ` · training: ${e(TRAINING[day.training] || day.training)}` : ''}</h3><ul>`);
       for (const k of SLOTS) {
-        const r = i >= 0 ? resolveSlot(plan, i, k) : null, slotLogs = logs.filter(l => l.slot === k && !l.extra), extras = logs.filter(l => l.slot === k && l.extra);
-        if (!r && !slotLogs.length && !extras.length) continue;
-        let line = `<b>${SLOT_LABEL[k]}:</b> `;
-        if (r) {
-          line += e(r.label) + (r.kind === 'leftover' ? ' (leftovers)' : '') + (r.recipe && r.recipe.lactose === 'contains' ? ' (contains lactose)' : '');
-          if (r.protein != null) line += ` — ${Math.round(r.protein)} g protein`;
-        } else line += 'nothing planned';
-        const l = slotLogs[0];
-        if (l) line += l.skipped ? ' — skipped' : l.planned ? ' — eaten' : ` — had ${e(logLabel(l))} instead`;
+        const items = itemsOf(day, k), slotLogs = logs.filter(l => l.slot === k && !l.extra), extras = logs.filter(l => l.slot === k && l.extra);
+        if (!items.length && !slotLogs.length && !extras.length) continue;
+        // One part per planned item, with how it went; then anything logged against an item no longer planned.
+        const parts = items.map(x => {
+          const r = resolveItem(plan, i, k, x), l = slotLogs.find(y => y.item === x.id);
+          let part = e(r.label) + (r.kind === 'leftover' ? ' (leftovers)' : '') + (r.recipe && r.recipe.lactose === 'contains' ? ' (contains lactose)' : '');
+          if (r.protein != null) part += ` — ${Math.round(r.protein)} g protein`;
+          if (l) part += l.skipped ? ' — skipped' : l.planned ? ' — eaten' : ` — had ${e(logLabel(l))} instead`;
+          return part;
+        });
+        slotLogs.filter(l => !items.some(x => x.id === l.item)).forEach(l => parts.push(l.skipped ? 'skipped' : `had ${e(logLabel(l))}`));
+        let line = `<b>${SLOT_LABEL[k]}:</b> ${parts.length ? parts.join('; ') : 'nothing planned'}`;
         if (extras.length) line += ` — also had ${extras.map(x => e(logLabel(x))).join(', ')}`;
         out.push(`<li>${line}</li>`);
       }
@@ -1412,38 +1468,42 @@
     };
     const alloc = weekAlloc(mondayOf(date));
     for (const k of SLOTS) {
-      const r = resolveSlot(plan, i, k);
+      const items = itemsOf(day, k).map(x => ({ x, r: resolveItem(plan, i, k, x) }));
       const slotLogs = logs.filter(l => l.slot === k && !l.extra);
       const extras = extrasFor(k);
-      if (!r && !slotLogs.length && !extras.length) {
+      if (!items.length && !slotLogs.length && !extras.length) {
         html += `<div class="card meal empty-meal"><div class="card-head"><span class="slot-label">${SLOT_LABEL[k]}</span>
           <span class="head-right"><span class="muted">nothing planned</span>
           <button class="btn small ghost edit-only add-to" data-action="add-to" data-slot="${k}" aria-label="Add food to ${SLOT_LABEL[k].toLowerCase()}">+</button></span></div></div>`;
         continue;
       }
-      const pending = r && !slotLogs.length;
-      // "Cooked & eaten" only when cooking leaves portions to put away; a single serve just says Eaten.
-      const sl = day.slots[k] || {}, cookAmt = pending && r.kind === 'recipe' && !sl.cooked ? (alloc.slotCook[date + '|' + k] || 0) : 0;
-      const toCook = cookAmt > 0, batchCook = toCook && cookAmt > r.servings;
-      const larderNote = pending && r.recipe && !toCook && portionsOf(r.recipe.id) > 0 ? `${sl.cooked ? 'cooked · ' : ''}${portionsOf(r.recipe.id)} in the larder` : (sl.cooked ? 'cooked' : '');
-      const total = (pending ? (r.protein || 0) : 0) + [...slotLogs, ...extras].reduce((t, l) => t + (l.proteinG || 0), 0);
+      // Each planned item is its own line: ticked (eaten, swapped or skipped) or still to eat.
+      const logOf = x => slotLogs.find(l => l.item === x.id);
+      const total = items.filter(({ x }) => !logOf(x)).reduce((t, { r }) => t + (r.protein || 0), 0)
+        + [...slotLogs, ...extras].reduce((t, l) => t + (l.proteinG || 0), 0);
       html += `<div class="card meal"><div class="card-head"><span class="slot-label">${SLOT_LABEL[k]}</span>
         <span class="head-right"><span class="muted">${gram(total)}</span>
         <button class="btn small ghost edit-only add-to" data-action="add-to" data-slot="${k}" aria-label="Add food to ${SLOT_LABEL[k].toLowerCase()}">+</button></span></div>`;
-      if (pending) {
+      for (const { x: sl, r } of items) {
+        const l = logOf(sl);
+        if (l) { html += doneRow(l, !l.planned ? `instead of <s>${esc(r.label)}</s>` : ''); continue; }
+        // "Cooked & eaten" only when cooking leaves portions to put away; a single serve just says Eaten.
+        const cookAmt = r.kind === 'recipe' && !sl.cooked ? (alloc.slotCook[itemKey(date, k, sl.id)] || 0) : 0;
+        const toCook = cookAmt > 0, batchCook = toCook && cookAmt > r.servings;
+        const larderNote = r.recipe && !toCook && portionsOf(r.recipe.id) > 0 ? `${sl.cooked ? 'cooked · ' : ''}${portionsOf(r.recipe.id)} in the larder` : (sl.cooked ? 'cooked' : '');
         const nameHtml = r.recipe
           ? `<button class="item-name link-plain" data-action="show-recipe" data-id="${r.recipe.id}" ${r.kind === 'recipe' && r.cook ? `data-cook="${r.cook}"` : ''}>${esc(r.label)}</button>`
           : `<span class="item-name">${esc(r.label)}</span>`;
         html += `<div class="item"><span class="item-mark"></span>
           <div class="item-main">${nameHtml} ${r.recipe ? lactoseBadge(r.recipe) : ''}${r.sub || larderNote || cookNote(r, cookAmt) ? `<div class="item-sub">${esc([r.sub, cookNote(r, cookAmt), larderNote].filter(Boolean).join(' · '))}</div>` : ''}</div>
           <span class="item-g">${gram(r.protein)}</span>
-          <span class="split edit-only item-act"><button class="btn small primary" data-action="eat" data-slot="${k}" data-hold="meal-menu">${batchCook ? 'Cooked &amp; eaten' : 'Eaten'}</button><button class="btn small primary more" data-action="meal-menu" data-slot="${k}" aria-label="More options">⋯</button></span></div>`;
+          <span class="split edit-only item-act"><button class="btn small primary" data-action="eat" data-slot="${k}" data-item="${sl.id}" data-hold="meal-menu">${batchCook ? 'Cooked &amp; eaten' : 'Eaten'}</button><button class="btn small primary more" data-action="meal-menu" data-slot="${k}" data-item="${sl.id}" aria-label="More options">⋯</button></span></div>`;
       }
-      html += slotLogs.map(l => doneRow(l, !l.planned && r ? `instead of <s>${esc(r.label)}</s>` : '')).join('');
+      html += slotLogs.filter(l => !items.some(({ x }) => x.id === l.item)).map(l => doneRow(l, '')).join('');
       html += extras.map(l => doneRow(l, '')).join('');
       html += `</div>`;
     }
-    const empty = SLOTS.every(k => !resolveSlot(plan, i, k));
+    const empty = SLOTS.every(k => !itemsOf(day, k).length);
     if (empty && !S.recipes.length) html += `<div class="card empty"><p>No recipes yet.</p>
       <p class="muted">Connect Google Drive in Settings to load your recipes and plans, import a file, or add recipes yourself.</p>
       <div class="row"><button class="btn" data-action="view" data-view="settings">Settings</button><button class="btn" data-action="view" data-view="recipes">Recipes</button></div></div>`;
@@ -1491,20 +1551,30 @@
       html += `<div class="card"><div class="card-head"><h3>${fmtDate(d.date)}${d.date === ui.today ? ' <span class="today-dot">today</span>' : ''}</h3>
         ${trainingChip(d.training, 'cycle-training', `data-day="${i}"`)}</div>`;
       for (const k of SLOTS) {
-        const r = resolveSlot(plan, i, k), sl = d.slots[k] || {};
-        let sub = r ? r.sub : '';
-        if (r && r.kind === 'recipe' && d.date) {
-          const m = alloc.byRecipe.get(r.recipe.id), amt = alloc.slotCook[d.date + '|' + k];
-          if (sl.cooked) sub = [r.servings !== 1 ? `${r.servings} servings` : '', `cooked ${sl.cooked.made}`].filter(Boolean).join(' · ');
-          else if (m && amt === 0 && m.covered > 0) sub = 'from the larder';
-          else if (m && amt > 0 && m.covered > 0)
-            sub = `larder covers ${m.covered} · cooking ${amt}${m.spare > 0 ? ` leaves ${m.spare} spare` : ''}`;
-          else if (amt > r.servings) sub = [r.sub, cookNote(r, amt)].filter(Boolean).join(' · ');
+        const items = itemsOf(d, k);
+        if (!items.length) {
+          html += `<button class="slot-row" data-action="edit-slot" data-day="${i}" data-slot="${k}">
+            <span class="slot-label">${SLOT_LABEL[k]}</span><span class="val"><span class="empty">+ add</span></span></button>`;
+          continue;
         }
-        html += `<button class="slot-row" data-action="edit-slot" data-day="${i}" data-slot="${k}">
-          <span class="slot-label">${SLOT_LABEL[k]}</span>
-          <span class="val">${r ? `${r.kind === 'leftover' ? `<span class="leftover">${esc(r.label)}</span>` : esc(r.label)} ${lactoseBadge(r.recipe)}
-            ${sub ? `<div class="sub">${esc(sub)}</div>` : ''}` : '<span class="empty">+ add</span>'}</span></button>`;
+        // One line per item (tap to change it), and + to add another item to the meal.
+        html += `<div class="slot-row multi"><span class="slot-label">${SLOT_LABEL[k]}</span><span class="val">`;
+        for (const sl of items) {
+          const r = resolveItem(plan, i, k, sl);
+          let sub = r.sub;
+          if (r.kind === 'recipe' && d.date) {
+            const m = alloc.byRecipe.get(r.recipe.id), amt = alloc.slotCook[itemKey(d.date, k, sl.id)];
+            if (sl.cooked) sub = [r.servings !== 1 ? `${r.servings} servings` : '', `cooked ${sl.cooked.made}`].filter(Boolean).join(' · ');
+            else if (m && amt === 0 && m.covered > 0) sub = 'from the larder';
+            else if (m && amt > 0 && m.covered > 0)
+              sub = `larder covers ${m.covered} · cooking ${amt}${m.spare > 0 ? ` leaves ${m.spare} spare` : ''}`;
+            else if (amt > r.servings) sub = [r.sub, cookNote(r, amt)].filter(Boolean).join(' · ');
+          }
+          html += `<button class="slot-item" data-action="edit-slot" data-day="${i}" data-slot="${k}" data-item="${sl.id}">
+            ${r.kind === 'leftover' ? `<span class="leftover">${esc(r.label)}</span>` : esc(r.label)} ${lactoseBadge(r.recipe)}
+            ${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</button>`;
+        }
+        html += `</span><button class="btn small ghost edit-only add-to" data-action="edit-slot" data-day="${i}" data-slot="${k}" aria-label="Add another item to ${WEEKDAY[i]} ${k}">+</button></div>`;
       }
       if (p.total || p.unknown) html += `<div class="sub" style="text-align:right">Planned protein ${Math.round(p.total)} g${p.unknown ? ' + some not set' : ''}</div>`;
       html += `</div>`;
@@ -1783,19 +1853,15 @@
     },
     slot(m) {
       const plan = viewPlan(ui.week), day = plan.days[m.day];
-      const sources = [];
-      plan.days.forEach((d, i) => SLOTS.forEach((k, j) => {
-        if (i > m.day || (i === m.day && j >= SLOTS.indexOf(m.slot))) return;
-        const s = d.slots[k];
-        if (s && (s.recipeId || s.text)) sources.push({ v: `${i}|${k}`, label: `${WEEKDAY[i]} ${k}: ${s.recipeId ? (byId('recipes', s.recipeId) || {}).name : s.text}` });
-      }));
+      const sources = planItems(plan).filter(({ i, k, x }) => (i < m.day || (i === m.day && SLOTS.indexOf(k) < SLOTS.indexOf(m.slot))) && (x.recipeId || x.text))
+        .map(({ i, k, x }) => ({ v: `${i}|${k}|${x.id}`, label: `${WEEKDAY[i]} ${k}: ${x.recipeId ? (byId('recipes', x.recipeId) || {}).name : x.text}` }));
       const r = m.recipeId && byId('recipes', m.recipeId);
       let body = '';
       if (m.mode === 'recipe') {
         body = recipePicker(m)
           + (r ? `<p>${lactoseBadge(r)} <span class="muted">${r.proteinPerServingG != null ? r.proteinPerServingG + ' g protein per serving' : 'Protein not set yet'} · recipe makes ${r.servings}</span></p>` : '')
           + `<div class="row">${field('Servings eaten', `<input type="number" inputmode="decimal" step="0.5" min="0.5" data-m="servings" data-type="num" value="${esc(m.servings)}">`)}
-            ${field('Servings to cook', `<input type="number" inputmode="decimal" step="1" min="1" data-m="cook" data-type="num" value="${esc(m.cook == null ? '' : m.cook)}" placeholder="${r ? plannedCook(viewPlan(ui.week), m.day, m.slot, r, Number(m.servings) || 1) : ''}">`)}</div>
+            ${field('Servings to cook', `<input type="number" inputmode="decimal" step="1" min="1" data-m="cook" data-type="num" value="${esc(m.cook == null ? '' : m.cook)}" placeholder="${r ? plannedCook(viewPlan(ui.week), m.day, m.slot, m.item, r, Number(m.servings) || 1) : ''}">`)}</div>
             <p class="muted">Leave blank to cook this meal plus its Leftovers in later slots. Type a number to cook extra for the larder. The shopping list buys for the servings cooked.</p>`;
       } else if (m.mode === 'leftover') {
         body = sources.length ? field('Leftovers from', `<select data-m="src" data-rerender><option value="">Choose…</option>${sources.map(s => `<option value="${s.v}" ${s.v === m.src ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select>`)
@@ -1806,12 +1872,14 @@
         body = field('What', `<input type="text" data-m="text" value="${esc(m.text)}" placeholder="e.g. Eating out, BBQ at Mum's">`)
           + field('Protein estimate (g, optional)', `<input type="number" inputmode="numeric" data-m="proteinG" data-type="num" value="${esc(m.proteinG == null ? '' : m.proteinG)}">`);
       }
-      return `<h2>${WEEKDAY[m.day]} ${SLOT_LABEL[m.slot].toLowerCase()} <span class="muted">${fmtDate(day.date)}</span></h2>
+      const adding = !m.item && itemsOf(day, m.slot).length > 0;
+      return `<h2>${adding ? 'Add to ' : ''}${WEEKDAY[m.day]} ${SLOT_LABEL[m.slot].toLowerCase()} <span class="muted">${fmtDate(day.date)}</span></h2>
+        ${adding ? `<p class="muted">Already planned: ${itemsOf(day, m.slot).map(x => esc(resolveItem(plan, m.day, m.slot, x).label)).join(', ')}</p>` : ''}
         <div class="seg" style="margin-top:12px">${[['recipe', 'Recipe'], ['leftover', 'Leftovers'], ['text', 'Free text']].map(([k, l]) =>
           `<button class="${m.mode === k ? 'on' : ''}" data-action="modal-pick" data-key="mode" data-value="${k}">${l}</button>`).join('')}</div>
         ${body}
         <div class="row"><button class="btn primary" data-action="save-slot">Save</button>
-          ${day.slots[m.slot] ? `<button class="btn danger" data-action="clear-slot">Clear</button>` : ''}${cancelBtn()}</div>`;
+          ${m.item ? `<button class="btn danger" data-action="clear-slot">Remove</button>` : ''}${cancelBtn()}</div>`;
     },
     cook(m) {
       const r = byId('recipes', m.recipeId), rest = Math.max(0, m.made - m.eatNow);
@@ -1838,16 +1906,16 @@
           ${m.id ? `<button class="btn danger" data-action="delete-portion">Remove</button>` : ''}${cancelBtn()}</div>`;
     },
     mealMenu(m) {
-      const { plan, i } = locateDay(ui.date), r = resolveSlot(plan, i, m.slot);
+      const { plan, i } = locateDay(ui.date), sl = findItem(plan.days[i], m.slot, m.item), r = resolveItem(plan, i, m.slot, sl);
+      const at = `data-slot="${m.slot}" data-item="${esc(m.item)}"`;
       return `<h2>${SLOT_LABEL[m.slot]}${r ? ` <span class="muted">· ${esc(r.label)}</span>` : ''}</h2>
         <div class="menu">
-          <button class="btn wide" data-action="swap" data-slot="${m.slot}">↺ Had something else</button>
-          <button class="btn wide" data-action="skip" data-slot="${m.slot}">– Didn't eat it</button>
+          <button class="btn wide" data-action="swap" ${at}>↺ Had something else</button>
+          <button class="btn wide" data-action="skip" ${at}>– Didn't eat it</button>
           ${(() => {
-            const sl = plan.days[i] && plan.days[i].slots[m.slot];
-            if (!r || r.kind !== 'recipe' || !sl) return '';
-            if (sl.cooked) return `<button class="btn wide" data-action="undo-cook" data-slot="${m.slot}">Undo cooked (${sl.cooked.made})</button>`;
-            return `<button class="btn wide" data-action="cook-ahead" data-slot="${m.slot}">🍳 Cooked, eating later</button>`;
+            if (!r || r.kind !== 'recipe') return '';
+            if (sl.cooked) return `<button class="btn wide" data-action="undo-cook" ${at}>Undo cooked (${sl.cooked.made})</button>`;
+            return `<button class="btn wide" data-action="cook-ahead" ${at}>🍳 Cooked, eating later</button>`;
           })()}
           ${r && r.recipe ? `<button class="btn wide" data-action="show-recipe" data-id="${r.recipe.id}">Recipe</button>` : ''}
           ${cancelBtn()}</div>`;
@@ -2001,7 +2069,7 @@
     const m = ui.modal;
     if (m.type === 'slot' && key === 'recipeId') { m.cook = null; return true; }
     if (m.type === 'slot' && key === 'src' && m.src) {
-      const [d, k] = m.src.split('|'), s = viewPlan(ui.week).days[d].slots[k], r = s && s.recipeId && byId('recipes', s.recipeId);
+      const [d, k, id] = m.src.split('|'), s = findItem(viewPlan(ui.week).days[d], k, id), r = s && s.recipeId && byId('recipes', s.recipeId);
       m.freezer = !!(r && r.tags.includes('batch') && m.day - Number(d) >= 3);
       return true;
     }
@@ -2028,21 +2096,20 @@
   //  - a cook slot that still needs cooking → cook it (ingredients out, spare portions into the Larder), eat one;
   //  - anything already cooked, leftovers, or a meal the Larder covers → eat portions from the Larder;
   //  - free text → just log it.
-  function startEat(slot) {
-    const date = ui.date, { plan, i } = locateDay(date), r = resolveSlot(plan, i, slot);
+  function startEat(slot, item) {
+    const date = ui.date, { plan, i } = locateDay(date), sl = findItem(plan.days[i], slot, item), r = resolveItem(plan, i, slot, sl);
     if (!r) return;
-    if (r.recipe && r.recipe.proteinPerServingG == null) return openModal({ type: 'protein', recipeId: r.recipe.id, then: { restartEat: slot }, proteinG: null });
-    if (!r.recipe) { addLog({ slot, text: r.label, servings: r.servings, proteinG: r.protein, planned: true }); return render(); }
-    const sl = plan.days[i].slots[slot];
-    const amt = r.kind === 'recipe' && !sl.cooked ? (weekAlloc(mondayOf(date)).slotCook[date + '|' + slot] || 0) : 0;
+    if (r.recipe && r.recipe.proteinPerServingG == null) return openModal({ type: 'protein', recipeId: r.recipe.id, then: { restartEat: { slot, item } }, proteinG: null });
+    if (!r.recipe) { addLog({ slot, item, text: r.label, servings: r.servings, proteinG: r.protein, planned: true }); return render(); }
+    const amt = r.kind === 'recipe' && !sl.cooked ? (weekAlloc(mondayOf(date)).slotCook[itemKey(date, slot, item)] || 0) : 0;
     if (amt > 0) {
       const eatNow = Math.min(r.servings, amt);
-      if (amt - eatNow > 0) return openCook(date, slot, r.recipe, amt, eatNow);
-      doCook(date, slot, r.recipe, amt, eatNow, {});
+      if (amt - eatNow > 0) return openCook(date, slot, item, r.recipe, amt, eatNow);
+      doCook(date, slot, item, r.recipe, amt, eatNow, {});
       return render();
     }
     const taken = takePortions(r.recipe.id, r.servings);
-    addLog({ slot, recipeId: r.recipe.id, servings: r.servings, proteinG: r.protein, planned: true, ...(taken.length ? { portionsUsed: taken } : {}) });
+    addLog({ slot, item, recipeId: r.recipe.id, servings: r.servings, proteinG: r.protein, planned: true, ...(taken.length ? { portionsUsed: taken } : {}) });
     render();
   }
 
@@ -2074,18 +2141,18 @@
     // Today
     day(el) { const d = Number(el.dataset.d); ui.date = d ? addDays(ui.date, d) : ui.today; render(); },
     'goto-week'() { ui.week = mondayOf(ui.date); ui.view = 'week'; render(); },
-    eat(el) { startEat(el.dataset.slot); },
-    'meal-menu'(el) { openModal({ type: 'mealMenu', slot: el.dataset.slot }); },
+    eat(el) { startEat(el.dataset.slot, el.dataset.item); },
+    'meal-menu'(el) { openModal({ type: 'mealMenu', slot: el.dataset.slot, item: el.dataset.item }); },
     'cook-ahead'(el) {
-      const k = el.dataset.slot, { plan, i } = locateDay(ui.date), r = resolveSlot(plan, i, k);
+      const k = el.dataset.slot, id = el.dataset.item, { plan, i } = locateDay(ui.date), r = resolveItem(plan, i, k, findItem(plan.days[i], k, id));
       if (!r || !r.recipe) return;
-      const amt = weekAlloc(mondayOf(ui.date)).slotCook[ui.date + '|' + k] || r.cook;
-      openCook(ui.date, k, r.recipe, amt, 0);
+      const amt = weekAlloc(mondayOf(ui.date)).slotCook[itemKey(ui.date, k, id)] || r.cook;
+      openCook(ui.date, k, id, r.recipe, amt, 0);
     },
     'undo-cook'(el) {
-      const k = el.dataset.slot;
-      if (S.mealLogs.some(l => l.date === ui.date && l.slot === k && !l.extra)) return toast('Undo the meal first');
-      undoCook(ui.date, k); closeModal(); toast('Cooking undone: ingredients back in the larder');
+      const k = el.dataset.slot, id = el.dataset.item;
+      if (S.mealLogs.some(l => l.date === ui.date && l.slot === k && l.item === id && !l.extra)) return toast('Undo the meal first');
+      undoCook(ui.date, k, id); closeModal(); toast('Cooking undone: ingredients back in the larder');
     },
     'cook-step'(el) {
       const m = ui.modal, d = Number(el.dataset.d), key = el.dataset.key;
@@ -2099,7 +2166,7 @@
       const placed = Object.values(m.alloc).reduce((t, n) => t + n, 0);
       if (!(m.made > 0)) return toast('How many portions did it make?');
       if (placed !== rest) return toast(`Put away ${rest} portion${rest === 1 ? '' : 's'} (${placed} so far)`);
-      doCook(m.date, m.slot, r, m.made, m.eatNow, m.alloc);
+      doCook(m.date, m.slot, m.item, r, m.made, m.eatNow, m.alloc);
       closeModal();
       toast(rest ? `${rest} portion${rest === 1 ? '' : 's'} into the larder` : 'Cooked');
     },
@@ -2130,15 +2197,15 @@
     'delete-portion'() { remove('pantryItems', ui.modal.id); closeModal(); },
     'add-to'(el) { openModal({ type: 'log', slot: el.dataset.slot, extra: true, mode: 'recipe', recipeId: '', text: '', servings: 1, proteinG: null }); },
     skip(el) {
-      addLog({ slot: el.dataset.slot, text: 'Skipped', proteinG: 0, servings: 1, planned: false, extra: false, skipped: true });
+      addLog({ slot: el.dataset.slot, item: el.dataset.item, text: 'Skipped', proteinG: 0, servings: 1, planned: false, extra: false, skipped: true });
       closeModal();
     },
-    swap(el) { openModal({ type: 'log', slot: el.dataset.slot, extra: false, mode: 'recipe', recipeId: '', text: '', servings: 1, proteinG: null }); },
+    swap(el) { openModal({ type: 'log', slot: el.dataset.slot, item: el.dataset.item, extra: false, mode: 'recipe', recipeId: '', text: '', servings: 1, proteinG: null }); },
     'save-protein'() {
       const m = ui.modal, r = byId('recipes', m.recipeId);
       if (!(m.proteinG >= 0) || m.proteinG === null) return toast('Enter the protein per serving');
       r.proteinPerServingG = m.proteinG; put('recipes', r);
-      if (m.then.restartEat) { closeModal(); startEat(m.then.restartEat); return; }
+      if (m.then.restartEat) { closeModal(); startEat(m.then.restartEat.slot, m.then.restartEat.item); return; }
       addLog({ ...m.then, recipeId: r.id, proteinG: round(m.proteinG * m.then.servings) });
       closeModal();
     },
@@ -2160,7 +2227,7 @@
         if (!String(m.text || '').trim()) return toast('Say what you ate');
         fields = { text: m.text.trim(), proteinG: m.proteinG };
       }
-      addLog({ ...fields, slot: m.slot, servings: n, planned: false, extra: m.extra });
+      addLog({ ...fields, slot: m.slot, ...(m.extra ? {} : { item: m.item }), servings: n, planned: false, extra: m.extra });
       closeModal();
     },
     'undo-log'(el) {
@@ -2168,7 +2235,7 @@
       if (l) {                   // what cooking or eating took out of the larder goes back
         returnUsed(l);
         returnPortions(l.portionsUsed);
-        if (l.cookedSlot) undoCook(l.date, l.slot);
+        if (l.cookedSlot) undoCook(l.date, l.slot, l.item);
       }
       remove('mealLogs', el.dataset.id); render();
     },
@@ -2181,16 +2248,18 @@
       put('weekPlans', plan); render();
     },
     'edit-slot'(el) {
-      const day = Number(el.dataset.day), slot = el.dataset.slot, s = viewPlan(ui.week).days[day].slots[slot] || {};
+      // With an item: change it. Without (an empty meal, or its +): add a new item to the meal.
+      const day = Number(el.dataset.day), slot = el.dataset.slot, plan = viewPlan(ui.week);
+      const s = (el.dataset.item && findItem(plan.days[day], slot, el.dataset.item)) || {};
       if (isViewer()) {
-        const r = resolveSlot(viewPlan(ui.week), day, slot);
+        const r = s.id && resolveItem(plan, day, slot, s);
         if (r && r.recipe) openModal({ type: 'recipeView', id: r.recipe.id, cook: r.kind === 'recipe' && r.cook ? r.cook : null });
         return;
       }
       openModal({
-        type: 'slot', day, slot, mode: s.leftoverOf ? 'leftover' : s.text != null ? 'text' : 'recipe',
+        type: 'slot', day, slot, item: s.id || null, mode: s.leftoverOf ? 'leftover' : s.text != null ? 'text' : 'recipe',
         recipeId: s.recipeId || '', servings: s.servings || 1, cook: s.cook || null,
-        src: s.leftoverOf ? `${s.leftoverOf.day}|${s.leftoverOf.slot}` : '', freezer: !!s.freezer, text: s.text || '', proteinG: s.proteinG == null ? null : s.proteinG,
+        src: s.leftoverOf ? `${s.leftoverOf.day}|${s.leftoverOf.slot}|${s.leftoverOf.item}` : '', freezer: !!s.freezer, text: s.text || '', proteinG: s.proteinG == null ? null : s.proteinG,
       });
     },
     'save-slot'() {
@@ -2201,20 +2270,21 @@
         v = { recipeId: m.recipeId, servings: Number(m.servings) || 1, cook: m.cook || null };
       } else if (m.mode === 'leftover') {
         if (!m.src) return toast('Choose where the leftovers come from');
-        const [d, k] = m.src.split('|');
-        v = { leftoverOf: { day: Number(d), slot: k }, servings: Number(m.servings) || 1, freezer: !!m.freezer };
+        const [d, k, item] = m.src.split('|');
+        v = { leftoverOf: { day: Number(d), slot: k, item }, servings: Number(m.servings) || 1, freezer: !!m.freezer };
       } else {
         if (!String(m.text || '').trim()) return toast('Type what the meal is');
         v = { text: m.text.trim(), proteinG: m.proteinG };
       }
-      const old = plan.days[m.day].slots[m.slot];
+      const day = plan.days[m.day], list = itemsOf(day, m.slot), old = m.item && findItem(day, m.slot, m.item);
       if (v.recipeId && old && old.cooked && old.recipeId === v.recipeId) v.cooked = old.cooked;   // still the same cook
-      plan.days[m.day].slots[m.slot] = v;
+      if (old) list[list.indexOf(old)] = Object.assign(v, { id: old.id }); else list.push(Object.assign(v, { id: newItemId() }));
+      day.slots[m.slot] = list;
       put('weekPlans', plan); closeModal();
     },
     'clear-slot'() {
-      const m = ui.modal, plan = viewPlan(ui.week);
-      delete plan.days[m.day].slots[m.slot];
+      const m = ui.modal, plan = viewPlan(ui.week), day = plan.days[m.day], list = itemsOf(day, m.slot).filter(x => x.id !== m.item);
+      if (list.length) day.slots[m.slot] = list; else delete day.slots[m.slot];
       put('weekPlans', plan); closeModal();
     },
     'copy-last'() {
@@ -2401,7 +2471,7 @@
     },
     'delete-recipe'() {
       const id = ui.modal.id;
-      const used = S.weekPlans.some(p => p.days.some(d => Object.values(d.slots).some(s => s.recipeId === id)));
+      const used = S.weekPlans.some(p => planItems(p).some(({ x }) => x.recipeId === id));
       if (!confirm(used ? 'This recipe is in a week plan or template. Delete it anyway?' : 'Delete this recipe?')) return;
       remove('recipes', id); closeModal();
     },

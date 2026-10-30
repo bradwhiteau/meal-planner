@@ -2,6 +2,16 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.5.0
+
+- **Several items in one meal:** a meal can hold any number of planned items (a shake and eggs for breakfast). On the
+  Week tab each item has its own line; tap it to change or remove it, and **+** beside the meal adds another. On Today each
+  item has its own **Eaten** and **⋯** (had something else, didn't eat it, cooked ahead), so the shake and the eggs tick
+  separately. Cooking, leftovers, the shopping list, the Larder, reminders and the Now doc count every item.
+- Data: each meal (`day.slots.breakfast` etc.) is now a list of items with ids; planned meal logs name their `item`, and
+  leftovers name the item they come from. Plans, templates and logs from earlier versions are converted when the app opens,
+  and patches written the old way are still read. See DATA.md.
+
 ## 2.4.3
 
 - Searching the Larder hides the heading and the four buttons while the search box is in use, so results show above the

@@ -35,8 +35,9 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
 
 ## Using it
 
-- **Sunday (Week tab):** **Use template** or **Copy last week**, tap any slot to change it, then **Generate list**.
-  - A slot holds a **recipe** (servings eaten, plus servings to cook; the list buys for the servings cooked), **leftovers** of an earlier slot that week, or **free text** with an optional protein estimate.
+- **Sunday (Week tab):** **Use template** or **Copy last week**, tap any meal to change it, then **Generate list**.
+  - A meal can hold **several items** (a shake and eggs). Tap an item to change or **Remove** it; the **+** beside a meal adds another.
+  - Each item is a **recipe** (servings eaten, plus servings to cook; the list buys for the servings cooked), **leftovers** of an earlier item that week, or **free text** with an optional protein estimate.
   - Tap a day's training tag (Weights / Treadmill / HIIT / Rest) to change it. New weeks start from Lift Log's schedule.
   - **Save as template** keeps a week you like for later.
 - **Shop tab:** grouped by store, then aisle. Tap a row, or swipe it right, to tick it. The **$** button sets price, quantity, store, aisle and "local".

@@ -28,6 +28,8 @@
     weekStart: day(offset * 7),
     days: Array.from({ length: 7 }, (_, i) => ({ date: day(offset * 7 + i), training: 'rest', slots: slotsByDay[i] || {} })),
   });
+  // What the plan cooks for a meal's first item (slotCook is keyed date|meal|item id).
+  const cookAt = (slotCook, date, k) => { const e = Object.entries(slotCook).find(([key]) => key.startsWith(`${date}|${k}|`)); return e ? e[1] : undefined; };
   let patchN = 0;
   const patch = (upserts, extra = {}) => ({ app: 'meal-planner', schemaVersion: 1, kind: 'patch', patchId: 'test-' + (++patchN) + '-' + Date.now(), upserts, ...extra });
 
@@ -303,18 +305,18 @@
     t.has('Needs 5: covers 3, cooks a full 6, 4 spare', c.$$('.slot-row').map(b => b.innerText).join(' / '), 'larder covers 3 · cooking 6 leaves 4 spare');
     await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
     t.ok('…and buys the batch', c.shopRow('Turkey mince') && c.shopRow('Passata'));
-    const fourDaysAgo = (() => { const d = new Date(); d.setDate(d.getDate() - 4); return ymd(d); })();
+    const lastThursday = day(-4);   // always old enough to flag, never this Monday's cook (rows would merge)
     await c.tab('pantry'); await c.click('[data-action="add-portion"]');
     await c.set('#modal [data-m="draft.recipeId"]', 'bol'); await c.set('#modal [data-m="draft.qty"]', '2');
-    await c.set('#modal [data-m="draft.location"]', 'Fridge'); await c.set('#modal [data-m="draft.cookedOn"]', fourDaysAgo);
+    await c.set('#modal [data-m="draft.location"]', 'Fridge'); await c.set('#modal [data-m="draft.cookedOn"]', lastThursday);
     await c.click('[data-action="save-portion"]', 150);
     t.has('A closed Fridge shows ⚠ when something needs eating or freezing', c.$$('.larder-loc').find(x => x.querySelector('.loc-name').innerText.trim() === 'Fridge').querySelector('summary').innerText, '⚠');
     await sleep(30);
     t.has('Prepared meal shows in the Fridge with 🍲 and eat or freeze', c.loc('Fridge').innerText, 'eat or freeze');
     await c.go(c.w.__mp.today());
     t.has('Today flags the old fridge portions', c.$('.card.prep') ? c.$('.card.prep').innerText : '', 'eat or freeze');
-    // Freeze the 4-day-old row (on a Thursday or later, Monday's cook is also old enough to be flagged).
-    const oldRow = (await c.all('pantryItems')).find(p => p.recipeId === 'bol' && p.cookedOn === fourDaysAgo);
+    // Freeze last Thursday's row (on a Thursday or later, Monday's cook is also old enough to be flagged).
+    const oldRow = (await c.all('pantryItems')).find(p => p.recipeId === 'bol' && p.cookedOn === lastThursday);
     await c.click(`[data-action="freeze-portion"][data-id="${oldRow.id}"]`, 150);
     t.ok('Freeze moved them', (await c.larder()).includes(`🍲bol×2@Freezer`));
     await c.click('[data-action="add-to"][data-slot="snack"]', 60);
@@ -356,7 +358,7 @@
     const nextWeek = async label => {
       await c.week(day(7));
       const alloc = c.w.__mp.alloc(day(7)).slotCook;
-      t.eq(`${label}: next Monday's mornay and bolognese cook nothing`, [alloc[day(7) + '|lunch'], alloc[day(7) + '|dinner']], [0, 0]);
+      t.eq(`${label}: next Monday's mornay and bolognese cook nothing`, [cookAt(alloc, day(7), 'lunch'), cookAt(alloc, day(7), 'dinner')], [0, 0]);
       t.has(`${label}: Monday lunch reads "from the larder"`, rows(), 'from the larder');
       await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
       t.eq(`${label}: no tuna on next week's list`, c.shopText('Tinned tuna'), '(no line)');
@@ -377,7 +379,7 @@
     await nextWeek('After cooking');
     // Still covered exactly: one fewer portion and next week's lunch has to cook again.
     await c.importJson(patch({ pantryItems: (await c.all('pantryItems')).filter(p => p.recipeId === 'morn').map(p => ({ ...p, qty: p.qty - 1, updatedAt: new Date(Date.now() + 5000).toISOString() })) }));
-    t.eq('One mornay short: next Monday cooks 1 again', c.w.__mp.alloc(day(7)).slotCook[day(7) + '|lunch'], 1);
+    t.eq('One mornay short: next Monday cooks 1 again', cookAt(c.w.__mp.alloc(day(7)).slotCook, day(7), 'lunch'), 1);
   });
 
   scenario('Bulgogi: cook what the plan eats, say where the rest goes (2.3.0)', async (c, t) => {
@@ -399,7 +401,7 @@
         4: { dinner: { recipeId: 'bul', servings: 1, cook: 3 } },
         5: { lunch: { leftoverOf: { day: 4, slot: 'dinner' }, servings: 1 } } })],
     }));
-    const slot = (d, k) => c.w.__mp.alloc(day(0)).slotCook[day(d) + '|' + k];
+    const slot = (d, k) => cookAt(c.w.__mp.alloc(day(0)).slotCook, day(d), k);
     t.eq('Single-serve bulgogi with no leftovers cooks 1', slot(0, 'dinner'), 1);
     t.eq('A four-serve recipe eaten once, no leftovers, cooks 1 (not the whole recipe)', slot(0, 'breakfast'), 1);
     t.eq('Curry cooks this meal plus its 2 leftovers', slot(0, 'lunch'), 3);
@@ -419,6 +421,103 @@
     await c.set('#modal [data-m="draft.boughtQty"]', '2.35'); await c.set('#modal [data-m="draft.boughtUnit"]', 'kg');
     await c.click('[data-action="save-item"]', 150);
     t.eq('Bought 2.35 kg: the larder holds what was actually bought', (await c.larder()).filter(x => x.startsWith('bulg')), ['bulg:2350g@']);
+  });
+
+  scenario('Shake and eggs: several items in one meal (2.5.0)', async (c, t) => {
+    const shakeEggs = updatedAt => patch({ weekPlans: [Object.assign(weekPlan('w0', 0, {
+      0: { breakfast: [{ id: 'sh', recipeId: 'shake', servings: 1, cook: null }, { id: 'eg', recipeId: 'egg', servings: 1, cook: null }],
+        dinner: [{ text: 'Side salad', proteinG: 5 }, { id: 'cu', recipeId: 'cur', servings: 1, cook: null }] },
+      1: { lunch: [{ leftoverOf: { day: 0, slot: 'dinner', item: 'cu' }, servings: 1 }] },
+      2: { breakfast: { recipeId: 'shake', servings: 1, cook: null } } }), updatedAt ? { updatedAt } : {})] });
+    await c.importJson(patch({
+      ingredients: [mk('whey', { name: 'Whey protein', defaultUnit: 'g', store: 'Costco', aisle: '1' }),
+        mk('eggs', { name: 'Eggs', defaultUnit: 'each', store: 'Costco', aisle: '2' }),
+        mk('chk2', { name: 'Chicken breast', defaultUnit: 'g', store: 'Butcher', aisle: 'Meat' })],
+      recipes: [mk('shake', { name: 'Shake', servings: 1, proteinPerServingG: 50, lactose: 'low', tags: [], method: '', ingredients: [{ ingredientId: 'whey', qty: 40, unit: 'g' }] }),
+        mk('egg', { name: 'Eggs on toast', servings: 1, proteinPerServingG: 18, lactose: 'none', tags: [], method: '', ingredients: [{ ingredientId: 'eggs', qty: 3, unit: 'each' }] }),
+        mk('cur', { name: 'Curry', servings: 1, proteinPerServingG: 49, lactose: 'none', tags: [], method: '', ingredients: [{ ingredientId: 'chk2', qty: 200, unit: 'g' }] })],
+    }));
+    await c.importJson(shakeEggs());
+    const plan = async () => (await c.all('weekPlans')).find(p => p.id === 'w0');
+    let w0 = await plan();
+    t.ok('A meal written the old way (one item, no list) becomes a list of one with an id',
+      Array.isArray(w0.days[2].slots.breakfast) && w0.days[2].slots.breakfast.length === 1 && !!w0.days[2].slots.breakfast[0].id);
+    t.eq('Items keep their ids; one without gets its own', [w0.days[0].slots.breakfast.map(x => x.id), typeof w0.days[0].slots.dinner[0].id], [['sh', 'eg'], 'string']);
+    t.eq('Leftovers point at the second item of a meal: curry cooks 2', c.w.__mp.alloc(day(0)).slotCook[`${day(0)}|dinner|cu`], 2);
+    await c.week(day(0)); await c.click('[data-action="generate"]', 300);
+    t.eq('The list buys for every item: 80 g whey (Mon + Wed), 3 eggs, 400 g chicken',
+      [c.shopText('Whey protein').split(' | ')[1], c.shopText('Eggs').split(' | ')[1], c.shopText('Chicken breast').split(' | ')[1]], ['80 g', '3 each', '400 g']);
+
+    // Today: each item ticks on its own.
+    await c.go(day(0));
+    const eats = () => [...c.card('breakfast').querySelectorAll('[data-action="eat"]')].map(b => b.dataset.item);
+    t.eq('Breakfast shows both items, each with its own Eaten', eats(), ['sh', 'eg']);
+    t.has('…and both counted in the meal\'s protein', c.card('breakfast').querySelector('.card-head').innerText, '68 g');
+    await c.click(c.card('breakfast').querySelector('[data-action="eat"][data-item="eg"]'), 150);
+    let logs = await c.all('mealLogs');
+    t.eq('Eaten on the eggs logs the eggs only', logs.map(l => [l.slot, l.item, l.recipeId, l.planned]), [['breakfast', 'eg', 'egg', true]]);
+    t.eq('…and the shake is still to eat', eats(), ['sh']);
+    await c.click(c.card('breakfast').querySelector('[data-action="meal-menu"][data-item="sh"]'), 60);
+    await c.click('#modal [data-action="skip"]', 120);
+    logs = await c.all('mealLogs');
+    t.ok('Didn\'t eat the shake: skipped on its own item', logs.some(l => l.item === 'sh' && l.skipped) && eats().length === 0);
+    await c.click([...c.card('breakfast').querySelectorAll('.item.done')].find(x => x.innerText.includes('Eggs')).querySelector('[data-action="undo-log"]'), 150);
+    t.eq('Undo the eggs: eggs back to eat, the shake stays skipped', eats(), ['eg']);
+
+    // The Now doc (today on) lists each item and how it went: next Monday, shake skipped, eggs still to eat.
+    await c.importJson(patch({ weekPlans: [weekPlan('w1', 1, { 0: { breakfast: [{ id: 'n1', recipeId: 'shake', servings: 1 }, { id: 'n2', recipeId: 'egg', servings: 1 }] } })],
+      mealLogs: [mk('nl', { date: day(7), slot: 'breakfast', item: 'n1', text: 'Skipped', servings: 1, proteinG: 0, planned: false, extra: false, skipped: true })] }));
+    t.has('Now doc lists each item and how it went', c.w.__mp.nowDoc(), 'Shake — 50 g protein — skipped; Eggs on toast — 18 g protein</li>');
+
+    // A patch rewriting the week without ids keeps the items' ids, so ticks stay put.
+    const noIds = shakeEggs(new Date(Date.now() + 5000).toISOString());
+    noIds.upserts.weekPlans[0].days[0].slots.breakfast.forEach(x => delete x.id);
+    await c.importJson(noIds);
+    w0 = await plan();
+    t.eq('Rewritten without ids: the shake and eggs keep theirs', w0.days[0].slots.breakfast.map(x => x.id), ['sh', 'eg']);
+    await c.go(day(0));
+    t.eq('…so the skipped shake is still skipped', eats(), ['eg']);
+
+    // A log from before 2.5.0 (no item) belongs to that meal's item.
+    await c.importJson(patch({ mealLogs: [mk('oldlog', { date: day(2), slot: 'breakfast', recipeId: 'shake', text: null, servings: 1, proteinG: 50, planned: true, extra: false })] }));
+    const oldLog = (await c.all('mealLogs')).find(l => l.id === 'oldlog');
+    t.eq('An old log without an item ticks off that meal\'s item', oldLog.item, w0.days[2].slots.breakfast[0].id);
+    await c.go(day(2));
+    t.eq('…so Wednesday\'s shake isn\'t waiting to be eaten', eats(), []);
+
+    // Week: + adds another item to a meal; Remove takes one out.
+    await c.week(day(0));
+    t.has('Week shows both breakfast items', c.$$('.slot-row')[0].innerText, 'Shake');
+    t.has('…on separate lines', c.$$('.slot-row')[0].innerText, 'Eggs on toast');
+    await c.click('.slot-row.multi .add-to[data-day="0"][data-slot="breakfast"]', 60);
+    t.has('+ opens "Add to Mon breakfast"', c.modalText(), 'Add to Mon breakfast');
+    await c.click('#modal [data-action="pick-recipe"][data-id="cur"]', 60);
+    await c.click('[data-action="save-slot"]', 120);
+    w0 = await plan();
+    t.eq('Saved as a third item, the others untouched', w0.days[0].slots.breakfast.map(x => x.recipeId), ['shake', 'egg', 'cur']);
+    await c.click(`[data-action="edit-slot"][data-item="${w0.days[0].slots.breakfast[2].id}"]`, 60);
+    await c.click('[data-action="clear-slot"]', 120);
+    t.eq('Remove takes out just that item', (await plan()).days[0].slots.breakfast.map(x => x.id), ['sh', 'eg']);
+    await c.click('[data-action="edit-slot"][data-day="1"][data-slot="lunch"]', 60);
+    t.eq('Leftovers sheet names the exact item they come from', c.$('#modal [data-m="src"]').value, '0|dinner|cu');
+    await c.click('[data-action="close-modal"]');
+
+    // The phone: plans and logs saved before 2.5.0 are brought up to date when the app opens.
+    await new Promise((res, rej) => {
+      const q = c.w.indexedDB.open('meal-planner-test');
+      q.onsuccess = () => {
+        const tx = q.result.transaction(['weekPlans', 'mealLogs'], 'readwrite');
+        tx.objectStore('weekPlans').put(weekPlan('old', 2, { 0: { lunch: { recipeId: 'cur', servings: 1, cook: null } }, 1: { dinner: { leftoverOf: { day: 0, slot: 'lunch' }, servings: 1 } } }));
+        tx.objectStore('mealLogs').put(mk('ol', { date: day(14), slot: 'lunch', recipeId: 'cur', servings: 1, proteinG: 49, planned: true, extra: false }));
+        tx.oncomplete = () => { q.result.close(); res(); }; tx.onerror = () => rej(tx.error);
+      };
+    });
+    c.w.location.reload(); await sleep(400);
+    await until(() => c.w.__mp && c.w.__mp.ready, 10000, 'the app to reopen');
+    const old = (await c.all('weekPlans')).find(p => p.id === 'old'), lunch = old.days[0].slots.lunch;
+    t.ok('On opening, an old saved plan becomes lists with ids, its leftovers pointing at the item',
+      Array.isArray(lunch) && !!lunch[0].id && old.days[1].slots.dinner[0].leftoverOf.item === lunch[0].id);
+    t.eq('…and an old saved log points at its item', (await c.all('mealLogs')).find(l => l.id === 'ol').item, lunch[0].id);
   });
 
   scenario('Kitty litter: "Keep at least" tops up the list (2.4.0)', async (c, t) => {
