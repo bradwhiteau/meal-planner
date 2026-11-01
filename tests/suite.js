@@ -205,9 +205,11 @@
     t.has('Shows the need under it', c.shopText('Jasmine rice'), 'need 500 g');
     t.eq('Price per pack saved', (await c.all('ingredients')).find(i => i.id === 'rice').packPrice, 4.5);
     await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
-    t.has('Next week 1.2 kg: 2 × 1 kg', c.shopText('Jasmine rice'), '2 × 1 kg');
+    t.has('Next week\'s list covers this week too: 500 g + 1.2 kg = 2 × 1 kg', c.shopText('Jasmine rice'), '2 × 1 kg');
+    t.has('…need 1.7 kg', c.shopText('Jasmine rice'), 'need 1.7 kg');
     t.has('Estimate scales: $9.00', c.shopText('Jasmine rice'), '$9.00');
-    await c.shop(day(0));
+    t.ok('This week\'s unbought rice line moved onto it', !(await c.all('shoppingItems')).some(i => i.weekStart === day(0) && i.ingredientId === 'rice'));
+    await c.shop(day(0)); await c.click('[data-action="regenerate"]', 300);
     await c.click(c.shopRow('Jasmine rice').querySelector('[data-action="tick"]'), 150);
     t.eq('Tick puts 1 kg in the larder', await c.larder(), ['rice:1kg@']);
     await c.click('[data-action="regenerate"]', 300);
@@ -355,18 +357,21 @@
         2: { dinner: { leftoverOf: { day: 0, slot: 'dinner' }, servings: 1 } } })],
     }));
     const rows = () => c.$$('.slot-row').map(b => b.innerText.replace(/\s*\n\s*/g, ' ')).join(' / ');
-    const nextWeek = async label => {
+    const nextWeek = async (label, before) => {
       await c.week(day(7));
       const alloc = c.w.__mp.alloc(day(7)).slotCook;
       t.eq(`${label}: next Monday's mornay and bolognese cook nothing`, [cookAt(alloc, day(7), 'lunch'), cookAt(alloc, day(7), 'dinner')], [0, 0]);
       t.has(`${label}: Monday lunch reads "from the larder"`, rows(), 'from the larder');
       await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
-      t.eq(`${label}: no tuna on next week's list`, c.shopText('Tinned tuna'), '(no line)');
-      t.eq(`${label}: no mince on next week's list`, c.shopText('Beef mince'), '(no line)');
+      // Next week's list also covers what's left of this week, so before cooking it buys this weekend's mornay
+      // (2 tins) and batch (1 kg) exactly once, and nothing for next Monday's.
+      t.eq(`${label}: tuna on next week's list`, c.shopText('Tinned tuna').split(' | ').slice(0, 2), before ? ['Tinned tuna', '2 tin'] : ['(no line)']);
+      t.eq(`${label}: mince on next week's list`, c.shopText('Beef mince').split(' | ').slice(0, 2), before ? ['Beef mince', '1 kg'] : ['(no line)']);
     };
     await c.week(day(0)); await c.click('[data-action="generate"]', 300);
     t.ok('This week buys the Sunday mornay and the Saturday batch', c.shopRow('Tinned tuna') && c.shopRow('Beef mince'));
-    await nextWeek('Before cooking');
+    await nextWeek('Before cooking', true);
+    await c.week(day(0)); await c.click('[data-action="generate"]', 300);
     // Cook both ahead (nothing eaten yet): the portions go into the Larder, and the plan must not count them twice.
     for (const [d, slot] of [[5, 'dinner'], [6, 'dinner']]) {
       await c.go(day(d));
@@ -376,7 +381,7 @@
     }
     t.eq('Cooked ahead: 6 bolognese and 2 mornay in the Larder', (await c.larder()).filter(x => x.startsWith('🍲')).map(x => x.replace(/@.*/, '')).reduce((a, x) => {
       const [, id, n] = x.match(/🍲(\w+)×(\d+)/); a[id] = (a[id] || 0) + Number(n); return a; }, {}), { bol2: 6, morn: 2 });
-    await nextWeek('After cooking');
+    await nextWeek('After cooking', false);
     // Still covered exactly: one fewer portion and next week's lunch has to cook again.
     await c.importJson(patch({ pantryItems: (await c.all('pantryItems')).filter(p => p.recipeId === 'morn').map(p => ({ ...p, qty: p.qty - 1, updatedAt: new Date(Date.now() + 5000).toISOString() })) }));
     t.eq('One mornay short: next Monday cooks 1 again', cookAt(c.w.__mp.alloc(day(7)).slotCook, day(7), 'lunch'), 1);
@@ -582,12 +587,14 @@
     t.has('…marked keep at least', c.shopText('Kitty litter'), 'keep at least 2 bag');
     t.has('Now doc mentions the minimum', c.w.__mp.nowDoc(), 'Kitty litter 1 bag (keep at least 2 bag, below it)');
     await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
-    t.eq('Next week\'s list doesn\'t add it again', c.shopText('Kitty litter'), '(no line)');
-    await c.shop(day(0));
+    t.eq('Next week\'s list takes it over, once', c.shopText('Kitty litter').split(' | ').slice(0, 2), ['Kitty litter', '1 bag']);
+    await c.shop(day(0)); await c.click('[data-action="regenerate"]', 300);
+    t.eq('This week\'s list doesn\'t add it again while next week\'s has it', c.shopText('Kitty litter'), '(no line)');
+    await c.shop(day(7));
     await c.click(c.shopRow('Kitty litter').querySelector('[data-action="tick"]'), 150);
     t.ok('Bought: back to 2 bags', (await c.larder()).includes('litter:2bag@Pantry Ground'), await c.larder());
-    await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
-    t.eq('Next week still nothing', c.shopText('Kitty litter'), '(no line)');
+    await c.click('[data-action="regenerate"]', 300);
+    t.eq('Regenerated: just the ticked line', c.$$('.shop-row').filter(r => r.innerText.includes('Kitty litter')).map(r => !!r.querySelector('.shop-item.checked')), [true]);
     // Clearing it.
     await c.tab('pantry');
     await c.click(c.loc('Pantry Ground').querySelector('[data-action="edit-pantry"]'));
@@ -601,6 +608,65 @@
     await c.click('[data-action="save-pantry"]', 150);
     await c.shop(day(14)); await c.click('[data-action="regenerate"]', 300);
     t.eq('Nothing planned in 2 weeks: still tops up to 3', c.shopText('Kitty litter').split(' | ').slice(0, 2), ['Kitty litter', '1 bag']);
+  });
+
+  scenario('One list: generate any time, it covers everything up to that week (2.6.0)', async (c, t) => {
+    // Brad's Sunday: this week's list (Sunday's mornay, cat biscuits, soy top-up) and next week's list were separate,
+    // so the cat biscuits were only on the first. Now the later list takes in the earlier one.
+    await c.importJson(patch({
+      ingredients: [mk('cat', { name: 'Cat biscuits', defaultUnit: 'pack', store: 'PetStock', aisle: '', keepQty: 2, keepUnit: 'pack' }),
+        mk('soy3', { name: 'Soy sauce', defaultUnit: 'ml', store: 'Supermarket', aisle: 'Pantry', keepQty: 160, keepUnit: 'ml' }),
+        mk('corn', { name: 'Cornflour', defaultUnit: 'g', store: 'Supermarket', aisle: '7' }),
+        mk('chk3', { name: 'Chicken thigh fillets', defaultUnit: 'g', store: 'Supermarket', aisle: 'Meat' })],
+      recipes: [mk('tm', { name: 'Tuna mornay', servings: 1, proteinPerServingG: 55, lactose: 'contains', tags: [], method: '', ingredients: [{ ingredientId: 'corn', qty: 15, unit: 'g' }] }),
+        mk('bb', { name: 'Burrito bowl', servings: 1, proteinPerServingG: 67, lactose: 'none', tags: [], method: '',
+          ingredients: [{ ingredientId: 'chk3', qty: 600, unit: 'g' }, { ingredientId: 'soy3', qty: 30, unit: 'ml' }] })],
+      weekPlans: [weekPlan('ow0', 0, { 6: { dinner: { recipeId: 'tm', servings: 1, cook: null } } }),
+        weekPlan('ow1', 1, { 0: { dinner: { recipeId: 'bb', servings: 1, cook: null } } })],
+      pantryItems: [mk('pc', { ingredientId: 'cat', qty: 1, unit: 'pack', location: 'Storage' }),
+        mk('ps', { ingredientId: 'soy3', qty: 40, unit: 'ml', location: 'Fridge' })],
+    }));
+    const qty = name => c.shopText(name).split(' | ').slice(0, 2);
+    const unbought = async week => (await c.all('shoppingItems')).filter(i => i.weekStart === week && !i.checked);
+    await c.shop(day(0)); await c.click('[data-action="regenerate"]', 300);
+    t.eq('This week: cat biscuits, soy top-up, cornflour', [qty('Cat biscuits'), qty('Soy sauce'), qty('Cornflour')],
+      [['Cat biscuits', '1 pack'], ['Soy sauce', '120 ml'], ['Cornflour', '15 g']]);
+    await c.click('[data-action="add-item"]');
+    await c.set('#modal [data-m="draft.text"]', 'Dog treats'); await c.set('#modal [data-m="draft.qty"]', '1'); await c.set('#modal [data-m="draft.unit"]', 'pack');
+    await c.click('[data-action="save-item"]', 120);
+    await c.click(c.shopRow('Cornflour').querySelector('[data-action="tick"]'), 150);
+    await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
+    t.eq('Next week\'s list keeps the cat biscuits', qty('Cat biscuits'), ['Cat biscuits', '1 pack']);
+    t.eq('…soy: 30 ml for the bowl + top-up to 160 ml − 40 ml = 150 ml, once', qty('Soy sauce'), ['Soy sauce', '150 ml']);
+    t.eq('…and next week\'s chicken', qty('Chicken thigh fillets'), ['Chicken thigh fillets', '600 g']);
+    t.eq('Bought cornflour isn\'t bought again', qty('Cornflour'), ['(no line)']);
+    t.has('Hand-added item carried over', c.shopText('Dog treats'), 'carried over');
+    t.eq('Nothing left unbought on this week\'s list', (await unbought(day(0))).length, 0);
+    t.ok('The ticked cornflour stays on this week\'s list', (await c.all('shoppingItems')).some(i => i.weekStart === day(0) && i.ingredientId === 'corn' && i.checked));
+    await c.click('[data-action="regenerate"]', 300);
+    t.eq('Regenerating doesn\'t duplicate it', c.$$('.shop-row').filter(r => r.innerText.includes('Dog treats')).length, 1);
+    t.has('Header says what it covers', c.$('.day-sub').innerText, 'covers now to');
+    t.eq('Shop tab opens on the list to shop from', c.w.__mp.shopListWeek(), day(7));
+    const doc = c.w.__mp.nowDoc();
+    t.has('Now doc shows the list with the cat biscuits', doc, 'Cat biscuits — 1 pack');
+    t.eq('…and only that one', (doc.match(/Shopping list, week of/g) || []).length, 1);
+    // A hand-added item for this week (e.g. a quick add) left behind after the list was generated still moves on.
+    await c.shop(day(0));
+    await c.click('[data-action="add-item"]');
+    await c.set('#modal [data-m="draft.text"]', 'Milk'); await c.set('#modal [data-m="draft.qty"]', '1'); await c.set('#modal [data-m="draft.unit"]', 'L');
+    await c.click('[data-action="save-item"]', 120);
+    await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
+    t.has('Regenerating picks it up', c.shopText('Milk'), 'carried over');
+    // Generating this week's list on its own still works, and doesn't repeat what next week's has.
+    await c.shop(day(0)); await c.click('[data-action="regenerate"]', 300);
+    t.eq('This week again: cornflour is ticked, no repeat top-ups', [qty('Cat biscuits'), qty('Soy sauce')], [['(no line)'], ['(no line)']]);
+    // A quick add from Claude (written for this week's Monday) lands on the list being shopped from.
+    await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
+    fakeDrive(c, [{ parent: INBOX, name: 'patch-quick-add.json', text: patch({ shoppingItems: [mk('qa', { weekStart: day(0), ingredientId: null, text: 'Bin bags', qty: 1, unit: 'pack', store: 'Supermarket', aisle: '', checked: false, price: null, isLocal: false, manual: true, forRecipes: '' })] }, { note: 'Add bin bags' }) }]);
+    await c.settings();
+    await c.set('[data-drive="inboxId"]', INBOX); await c.set('[data-drive="outboxId"]', OUTBOX);
+    await c.click('[data-action="drive-test"]', 1500);
+    t.eq('Quick add went onto next week\'s list', ((await c.all('shoppingItems')).find(i => i.id === 'qa') || {}).weekStart, day(7));
   });
 
   scenario('Pepsi Max: one item in two places (2.0.2)', async (c, t) => {

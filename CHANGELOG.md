@@ -2,6 +2,17 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.6.0
+
+- **One shopping list:** generate any time and the list covers everything still needed up to the end of the week you're
+  looking at: this week's remaining meals as well as that week's, plus "Keep at least" top-ups, less what's in the Larder
+  (counted once). Earlier weeks' unbought lines fold in: generated ones are worked out again on the new list, and
+  hand-added ones move across ("carried over"), once. Ticked lines stay where they were bought. Before, each week had its
+  own list, so a top-up (cat biscuits) could sit on this week's list while you shopped from next week's.
+- The Shop tab opens on the list to shop from, and a later week's header says "covers now to Sun 8 Nov".
+- Quick adds from Claude go onto that list too.
+- "Meal Planner Now" only shows a week's list while something on it is unbought.
+
 ## 2.5.0
 
 - **Several items in one meal:** a meal can hold any number of planned items (a shake and eggs for breakfast). On the

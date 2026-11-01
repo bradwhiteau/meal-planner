@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.5.0';
+  const APP_VERSION = '2.6.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -354,20 +354,11 @@
     }
     return { byRecipe, slotCook };
   }
-  function needsFor(week) {
-    const plan = planFor(week), need = new Map(), { slotCook } = weekAlloc(week);
-    for (const { d: day, k, x: s } of planItems(plan)) {
-      if (!s.recipeId) continue;
-      const amt = slotCook[itemKey(day.date, k, s.id)];
-      if (!(amt > 0)) continue;     // already cooked, eaten, or covered by portions in the Larder
-      const r = byId('recipes', s.recipeId); if (!r) continue;
-      const f = amt / (r.servings || 1);
-      for (const ing of r.ingredients) {
-        const n = norm(ing.qty * f, ing.unit), key = ing.ingredientId + '|' + n.unit;
-        const cur = need.get(key) || { ingredientId: ing.ingredientId, unit: n.unit, qty: 0, measured: n.measured, recipes: new Set() };
-        cur.qty += n.qty; cur.recipes.add(r.name); need.set(key, cur);
-      }
-    }
+  // What a list for `week` has to buy: the meals of every week from `from` (default: just this one) to `week`,
+  // plus "Keep at least" top-ups, less what's in the Larder now (counted once across all of them).
+  function needsFor(week, from = week) {
+    const need = new Map();
+    for (let w = from; w <= week; w = addDays(w, 7)) mealNeeds(w, need);
     for (const ing of S.ingredients) {
       const k = keepOf(ing); if (!k) continue;
       const key = ing.id + '|' + k.unit;
@@ -380,12 +371,29 @@
       return { ...x, gross: Math.ceil(x.qty - 0.001), larder: round(Math.min(have, x.qty), 3), keepShort: round(keepShort, 3), qty: short + keepShort };
     }).filter(x => x.qty > 0.001).map(x => ({ ...x, qty: Math.ceil(x.qty - 0.001) }));
   }
+  // Adds one week's meal ingredients (meals still to cook, scaled by what each cooks) to `need`.
+  function mealNeeds(week, need) {
+    const plan = planFor(week), { slotCook } = weekAlloc(week);
+    for (const { d: day, k, x: s } of planItems(plan)) {
+      if (!s.recipeId) continue;
+      const amt = slotCook[itemKey(day.date, k, s.id)];
+      if (!(amt > 0)) continue;     // already cooked, eaten, or covered by portions in the Larder
+      const r = byId('recipes', s.recipeId); if (!r) continue;
+      const f = amt / (r.servings || 1);
+      for (const ing of r.ingredients) {
+        const n = norm(ing.qty * f, ing.unit), key = ing.ingredientId + '|' + n.unit;
+        const cur = need.get(key) || { ingredientId: ing.ingredientId, unit: n.unit, qty: 0, measured: n.measured, recipes: new Set() };
+        cur.qty += n.qty; cur.recipes.add(r.name); need.set(key, cur);
+      }
+    }
+  }
   // "Keep at least": things Brad never wants to run out of (kitty litter, rice), set on the ingredient as keepQty +
   // keepUnit and counted across every Larder location. The list buys enough for the week's meals and still leaves
-  // that much afterwards. A top-up already on another current week's unbought list isn't added again.
+  // that much afterwards. A top-up already on a later week's unbought list isn't added again (earlier weeks' unbought
+  // lines move onto this list when it's generated, so they're counted here instead).
   const keepOf = ing => (ing && Number(ing.keepQty) > 0 && ing.keepUnit ? norm(Number(ing.keepQty), ing.keepUnit) : null);
   const keepPending = (ingredientId, unit, week) => S.shoppingItems
-    .filter(i => i.ingredientId === ingredientId && !i.checked && i.weekStart !== week && i.weekStart >= mondayOf(ui.today) && Number(i.keepShort) > 0 && i.unit === unit)
+    .filter(i => i.ingredientId === ingredientId && !i.checked && i.weekStart > week && Number(i.keepShort) > 0 && i.unit === unit)
     .reduce((t, i) => t + Number(i.keepShort), 0);
   const keepLabel = ing => `keep at least ${fmtQty(Number(ing.keepQty), ing.keepUnit)}`;
   // Saves "Keep at least" from the Larder sheet onto the ingredient (blank or 0 clears it).
@@ -415,13 +423,24 @@
     if (pk && hasNum(ing.packPrice)) return round(pk.packs * Number(ing.packPrice), 2);
     return hasNum(ing.lastPrice) ? Number(ing.lastPrice) : null;
   }
-  // Regenerating keeps ticked lines exactly as bought, plus prices and hand-added items. A week's first list
-  // also brings over last week's unticked hand-added items.
+  // One list for the next shop: generating a list for this week or a later one covers every meal still to come
+  // from this week up to the end of that week, plus the top-ups. Earlier weeks' unbought lines are folded in:
+  // their generated lines are recalculated here (and removed there), their hand-added lines move here. Ticked lines
+  // stay where they were bought. Regenerating keeps ticked lines exactly as bought, plus prices and hand-added items.
+  const shopFrom = week => (week >= mondayOf(ui.today) ? mondayOf(ui.today) : week);
+  const plannedIn = week => { for (let w = shopFrom(week); w <= week; w = addDays(w, 7)) if (planFor(w) && !planIsEmpty(planFor(w))) return true; return false; };
+  // The list to shop from: the earliest week from this one on with anything unbought (else this week).
+  function shopListWeek() {
+    const cur = mondayOf(ui.today);
+    const weeks = S.shoppingItems.filter(i => !i.checked && i.weekStart >= cur).map(i => i.weekStart).sort();
+    return weeks[0] || cur;
+  }
+  const sameManual = (a, b) => String(a.text || '').trim().toLowerCase() === String(b.text || '').trim().toLowerCase() && (a.unit || '') === (b.unit || '');
   function generateShopping(week) {
     const old = S.shoppingItems.filter(i => i.weekStart === week);
     const oldGen = new Map(old.filter(i => !i.manual).map(i => [i.ingredientId + '|' + i.unit, i]));
     const items = [];
-    for (const n of needsFor(week)) {
+    for (const n of needsFor(week, shopFrom(week))) {
       const ing = byId('ingredients', n.ingredientId) || {}, key = n.ingredientId + '|' + n.unit, prev = oldGen.get(key);
       oldGen.delete(key);
       if (prev && prev.checked) continue;          // bought: leave it alone
@@ -433,14 +452,19 @@
         forRecipes: [...n.recipes, ...(n.keepShort > 0 ? [keepLabel(ing)] : [])].join(', '), keepShort: n.keepShort || 0,
       }));
     }
-    if (!old.length) {
-      S.shoppingItems.filter(i => i.weekStart === addDays(week, -7) && i.manual && !i.checked)
-        .forEach(i => items.push({ ...clone(i), id: null, createdAt: null, weekStart: week, carried: true }));
+    // Earlier weeks' unbought lines: generated ones are covered above, hand-added ones move here (once).
+    const earlier = S.shoppingItems.filter(i => i.weekStart < week && !i.checked);
+    const gone = earlier.filter(i => !i.manual).map(i => i.id);
+    const here = old.filter(i => i.manual && !i.checked);
+    for (const i of earlier.filter(i => i.manual)) {
+      if (here.some(h => sameManual(h, i))) { gone.push(i.id); continue; }
+      const moved = Object.assign(i, { weekStart: week, carried: true });
+      items.push(moved); here.push(moved);
     }
     // Lines no longer needed go, except ticked ones: those were bought.
-    remove('shoppingItems', [...oldGen.values()].filter(i => !i.checked).map(i => i.id));
+    remove('shoppingItems', [...[...oldGen.values()].filter(i => !i.checked).map(i => i.id), ...gone]);
     put('shoppingItems', items);
-    return old.filter(i => i.checked).length + items.length;
+    return S.shoppingItems.filter(i => i.weekStart === week).length;
   }
   // What ticking a line puts in the larder: the amount bought if changed, else the packs suggested, else the line.
   function boughtOf(it) {
@@ -1067,10 +1091,14 @@
       && Number.isFinite(Number(r.proteinG)) && Number(r.proteinG) >= 0 && Number(r.proteinG) <= 200
       && !r.pantryUsed && !r.portionsUsed && !r.cookedSlot);
   async function autoApplyQuickAdds() {
-    const quick = drive.pending.filter(isQuickAdd), names = [];
+    const quick = drive.pending.filter(isQuickAdd), names = [], listWeek = shopListWeek();
     for (const item of quick) {
       await applyInboxItem(item);
       item.inc.ups.shoppingItems.forEach(r => r.text && names.push(r.text));
+      // Onto the list Brad's shopping from, if that's a later week's (it already covers this week).
+      const moved = item.inc.ups.shoppingItems.map(r => byId('shoppingItems', r.id))
+        .filter(x => x && !x.checked && x.weekStart < listWeek).map(x => Object.assign(x, { weekStart: listWeek }));
+      if (moved.length) put('shoppingItems', moved);
     }
     const foods = [];
     for (const item of drive.pending.filter(isFoodAdd)) {
@@ -1179,11 +1207,11 @@
       if (prep.length) out.push(`<p>Prep that day: ${prep.map(t => e(t.text)).join('; ')}.</p>`);
     }
 
-    // Shopping: last week's list if anything on it is still unbought, then this week's and next week's;
-    // unticked items by store and aisle.
+    // Shopping: last week's, this week's and next week's lists, each only while something on it is unbought
+    // (once a later list is generated it takes in the earlier ones); unticked items by store and aisle.
     for (const week of [addDays(mondayOf(today), -7), mondayOf(today), addDays(mondayOf(today), 7)]) {
       const items = S.shoppingItems.filter(x => x.weekStart === week);
-      if (!items.length || (week < mondayOf(today) && items.every(x => x.checked))) continue;
+      if (!items.length || items.every(x => x.checked)) continue;
       const left = items.filter(x => !x.checked);
       out.push(`<h2>Shopping list, week of ${e(fmtDate(week))}</h2>
         <p>${left.length} still to buy; ${items.length - left.length} already bought.</p>`);
@@ -1602,7 +1630,7 @@
     const week = ui.shopWeek, items = S.shoppingItems.filter(i => i.weekStart === week);
     let html = `<div class="day">
       <button class="nav" data-action="shop-week" data-d="-7" aria-label="Previous week">‹</button>
-      <div class="day-title"><div class="day-name">Shopping</div><div class="day-sub">Week of ${fmtDate(week)}</div></div>
+      <div class="day-title"><div class="day-name">Shopping</div><div class="day-sub">Week of ${fmtDate(week)}${week > mondayOf(ui.today) ? ` · covers now to ${fmtDate(addDays(week, 6))}` : ''}</div></div>
       <button class="nav" data-action="shop-week" data-d="7" aria-label="Next week">›</button></div>`;
     const priced = items.filter(i => i.price != null && i.price !== '');
     const total = priced.reduce((t, i) => t + Number(i.price), 0);
@@ -1635,7 +1663,7 @@
           return `<div class="shop-row"><button class="shop-item ${it.checked ? 'checked' : ''}" data-action="tick" data-id="${it.id}">
             <span class="tick">${it.checked ? '✓' : ''}</span>
             <span class="si-main"><span class="si-name">${esc(x.name)}</span>
-              <span class="si-qty">${shopQty(it)}${x.isLocal ? ' · <span class="badge local">local</span>' : ''}${it.carried ? ' · from last week' : ''}</span>
+              <span class="si-qty">${shopQty(it)}${x.isLocal ? ' · <span class="badge local">local</span>' : ''}${it.carried ? ' · carried over' : ''}</span>
               ${shopNeed(it)}</span>
             ${it.price != null && it.price !== '' ? `<span class="si-price">${money(it.price)}</span>` : ''}</button>
             <button class="si-more edit-only" data-action="edit-item" data-id="${it.id}" aria-label="Edit ${esc(x.name)}">$</button></div>`;
@@ -2114,7 +2142,7 @@
   }
 
   const actions = {
-    view(el) { ui.view = el.dataset.view; ui.modal = null; if (ui.view === 'today') ui.date = ui.today; render(); window.scrollTo(0, 0); },
+    view(el) { ui.view = el.dataset.view; ui.modal = null; if (ui.view === 'today') ui.date = ui.today; if (ui.view === 'shop') ui.shopWeek = shopListWeek(); render(); window.scrollTo(0, 0); },
     menu() { openModal({ type: 'menu' }); },
     'suggest-pick'(el) {
       const box = el.parentElement, input = box.previousElementSibling;
@@ -2317,7 +2345,7 @@
       put('weekPlans', t); closeModal(); toast(`Saved template "${name}"`);
     },
     generate() {
-      if (planIsEmpty(viewPlan(ui.week)) && !S.ingredients.some(keepOf)) return toast('Plan the week first');
+      if (!plannedIn(ui.week) && !S.ingredients.some(keepOf)) return toast('Plan the week first');
       const n = generateShopping(ui.week);
       ui.shopWeek = ui.week; ui.view = 'shop'; render(); window.scrollTo(0, 0);
       toast(`${n} items on the list`);
@@ -2326,7 +2354,7 @@
     // Shop
     'shop-week'(el) { ui.shopWeek = addDays(ui.shopWeek, Number(el.dataset.d)); render(); },
     regenerate() {
-      if (!planFor(ui.shopWeek) && !S.ingredients.some(keepOf)) return toast('Nothing planned that week');
+      if (!plannedIn(ui.shopWeek) && !S.ingredients.some(keepOf)) return toast('Nothing planned that week');
       const n = generateShopping(ui.shopWeek); render(); toast(`${n} items, ticks kept`);
     },
     'hide-ticked'() { ui.hideTicked = !ui.hideTicked; render(); },
@@ -2747,6 +2775,7 @@
       db = await openDb();
       if (!(await getAll('settings')).length) await firstRun();
       await loadAll();
+      ui.shopWeek = shopListWeek();
     } catch (e) {
       $('#app').innerHTML = `<div class="card"><h2>Can't open storage</h2><p class="muted">${esc(e.message)}</p></div>`;
       return;
@@ -2763,7 +2792,7 @@
     if (!TEST && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
     if (TEST) {
       window.__mp = {
-        ready: true, ui, S, today: () => ui.today, nowDoc: () => nowDocHtml(), alloc: week => weekAlloc(week),
+        ready: true, ui, S, today: () => ui.today, shopListWeek: () => shopListWeek(), nowDoc: () => nowDocHtml(), alloc: week => weekAlloc(week),
         go(date) { ui.modal = null; ui.view = 'today'; ui.date = date; render(); },
         week(weekStart) { ui.modal = null; ui.view = 'week'; ui.week = weekStart; render(); },
         shop(weekStart) { ui.modal = null; ui.view = 'shop'; ui.shopWeek = weekStart; render(); },

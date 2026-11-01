@@ -42,7 +42,9 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
   - **Save as template** keeps a week you like for later.
 - **Shop tab:** grouped by store, then aisle. Tap a row, or swipe it right, to tick it. The **$** button sets price, quantity, store, aisle and "local".
   Store, aisle and local are saved to the ingredient, so you fix an item once. **Regenerate** after changing the plan or pantry; ticks, prices and hand-added items are kept.
-  A week's first list brings over last week's unticked hand-added items.
+  **One list for the next shop:** generating a list for this week or a later one covers every meal still to come up to the
+  end of that week, plus "Keep at least" top-ups. Anything unbought on earlier weeks' lists moves onto it (hand-added items
+  show "carried over"), so generate whenever you're about to shop and use the one list. The Shop tab opens on it.
 - **Larder tab:** **+ Add to larder**, **🍲 + Prepared meal**, **Baked sourdough** and **Collected eggs** sit at the top. Below, each location (Fridge, Freezer, Pantry Shelf 1…; edit the list in Settings) folds open and closed, showing its 🍲 meals and item count, with ⚠ if something inside needs eating or freezing. **Search the larder** (under the buttons) shows only
   the items whose name matches, and only the locations that have one. It works by itself:
   ticking a bought item on the Shop tab adds it, and tapping **Eaten** on a meal you cooked takes that recipe's ingredients out
