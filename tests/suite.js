@@ -271,6 +271,15 @@
     await c.go(day(0));
     t.eq('Batch cook says Cooked & eaten', c.card('lunch').querySelector('[data-action="eat"]').innerText, 'Cooked & eaten');
     t.eq('Single serve says Eaten', c.card('breakfast').querySelector('[data-action="eat"]').innerText, 'Eaten');
+    // The recipe sheet when cooking: each ingredient for 1 serve and for the whole cook, and why that many.
+    await c.click(c.card('lunch').querySelector('[data-action="show-recipe"]'), 60);
+    const ingRows = () => c.$$('#modal .ing-table tr').map(r => [...r.children].map(x => x.textContent.trim()).join(' | '));
+    t.eq('Cooking sheet: 1 serve and cooking 6, side by side', ingRows(), [' | 1 serve | Cooking 6', 'Turkey mince | 166.67 g | 1 kg', 'Passata | 116.67 g | 700 g']);
+    t.has('…and says what the 6 are for', c.modalText(), 'Cooking 6 serves | this meal · 2 for leftovers (Tue dinner, Thu dinner) · 3 spare for the larder');
+    await c.click('[data-action="close-modal"]');
+    await c.click(c.card('breakfast').querySelector('[data-action="show-recipe"]'), 60);
+    t.eq('A single serve shows just the 1 serve column', ingRows(), [' | 1 serve', 'Steel-cut oats | 80 g']);
+    await c.click('[data-action="close-modal"]');
     await c.click(c.card('breakfast').querySelector('[data-action="eat"]'), 150);
     t.ok('Single serve: no sheet', c.$('#modal').hidden);
     t.eq('Oats: 80 g out', await c.larder(), ['mince:1000g@', 'oats:290g@', 'passata:700g@']);
@@ -284,7 +293,7 @@
     await c.click(c.card('lunch').querySelector('[data-action="eat"]'), 120);
     await c.click('[data-action="save-cook"]', 200);
     await c.go(day(1));
-    t.has('Leftover shows portions in the larder', c.card('dinner').innerText, '5 in the larder');
+    t.eq('Leftovers say where the portions are, not which meal they came from', c.card('dinner').querySelector('.item-sub').innerText, '1 in the Fridge, 4 in the Freezer');
     await c.click(c.card('dinner').querySelector('[data-action="eat"]'), 150);
     t.eq('Leftovers eat the fridge portion first', await c.larder(), ['mince:0g@', 'oats:290g@', 'passata:0g@', '🍲bol×4@Freezer']);
     await c.go(day(2));
@@ -506,6 +515,11 @@
     await c.click('[data-action="edit-slot"][data-day="1"][data-slot="lunch"]', 60);
     t.eq('Leftovers sheet names the exact item they come from', c.$('#modal [data-m="src"]').value, '0|dinner|cu');
     await c.click('[data-action="close-modal"]');
+    // Tuesday's leftovers of Monday's curry, which was never cooked: none to eat (unless Monday is still to come).
+    await c.go(day(1));
+    const lunchSub = c.card('lunch').querySelector('.item-sub');
+    t.eq('Leftovers whose cook never happened: none in the larder, flagged',
+      [lunchSub.innerText, lunchSub.classList.contains('warn-text')], day(0) >= c.w.__mp.today() ? ['from the larder once cooked', false] : ['none in the larder', true]);
 
     // The phone: plans and logs saved before 2.5.0 are brought up to date when the app opens.
     await new Promise((res, rej) => {

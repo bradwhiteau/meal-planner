@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.6.0';
+  const APP_VERSION = '2.7.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -256,6 +256,12 @@
     return parts.join(' · ');
   }
 
+  // Why a cook makes this many, for the recipe sheet: "this meal + 2 leftovers (Wed dinner, Fri dinner) + 1 spare".
+  function cookWhy(r, amt) {
+    const note = cookNote(r, amt);
+    return note ? 'this meal · ' + note.split(' · ').slice(1).join(' · ') : '';
+  }
+
   // What a planned item means for display, logging and protein.
   function resolveItem(plan, dayIdx, key, s) {
     if (!s) return null;
@@ -266,7 +272,7 @@
       return {
         kind: 'leftover', recipe: r, servings: n, label: r ? r.name : (src && src.text) || 'Leftovers',
         protein: r && r.proteinPerServingG != null ? r.proteinPerServingG * n : null,
-        sub: `Leftovers from ${WEEKDAY[s.leftoverOf.day]} ${s.leftoverOf.slot}${s.freezer ? ' · freezer' : ''}`, freezer: !!s.freezer,
+        sub: `from the larder${s.freezer ? ' · freezer' : ''}`, freezer: !!s.freezer, src: s.leftoverOf,
       };
     }
     if (s.recipeId) {
@@ -546,6 +552,12 @@
   const isPortion = x => !!x.recipeId && !x.ingredientId;
   const portionRows = recipeId => S.pantryItems.filter(x => isPortion(x) && x.recipeId === recipeId && Number(x.qty) > 0);
   const portionsOf = recipeId => portionRows(recipeId).reduce((t, x) => t + Number(x.qty), 0);
+  // Where a recipe's portions are: "1 in the Fridge, 4 in the Freezer".
+  function portionsWhere(recipeId) {
+    const by = new Map();
+    portionRows(recipeId).filter(x => Number(x.qty) > 0).forEach(x => by.set(x.location || 'the larder', (by.get(x.location || 'the larder') || 0) + Number(x.qty)));
+    return [...by].map(([loc, n]) => `${round(n, 2)} in ${loc === 'the larder' ? loc : 'the ' + loc}`).join(', ');
+  }
   const isFridge = loc => /fridge/i.test(loc || '');
   const isFreezer = loc => /freez/i.test(loc || '');
   const coldLocations = () => { const l = settings.locations.filter(x => isFridge(x) || isFreezer(x)); return l.length ? l : ['Fridge', 'Freezer']; };
@@ -1518,12 +1530,22 @@
         // "Cooked & eaten" only when cooking leaves portions to put away; a single serve just says Eaten.
         const cookAmt = r.kind === 'recipe' && !sl.cooked ? (alloc.slotCook[itemKey(date, k, sl.id)] || 0) : 0;
         const toCook = cookAmt > 0, batchCook = toCook && cookAmt > r.servings;
-        const larderNote = r.recipe && !toCook && portionsOf(r.recipe.id) > 0 ? `${sl.cooked ? 'cooked · ' : ''}${portionsOf(r.recipe.id)} in the larder` : (sl.cooked ? 'cooked' : '');
+        const where = r.recipe && !toCook ? portionsWhere(r.recipe.id) : '';
+        let larderNote = where ? `${sl.cooked ? 'cooked · ' : ''}${where}` : (sl.cooked ? 'cooked' : ''), none = false;
+        if (r.kind === 'leftover' && !where) {
+          // Not cooked yet (later this week) is fine; cooked, skipped or already eaten means there's none to eat.
+          const sd = plan.days[r.src.day], src = findItem(sd, r.src.slot, r.src.item);
+          const waiting = src && !src.cooked && sd.date >= ui.today && !S.mealLogs.some(l => l.date === sd.date && l.slot === r.src.slot && l.item === src.id);
+          larderNote = waiting ? 'from the larder once cooked' : 'none in the larder';
+          none = !waiting;
+        }
+        const sub = [r.kind === 'leftover' ? '' : r.sub, cookNote(r, cookAmt), larderNote].filter(Boolean).join(' · ');
+        // The recipe opens with each ingredient for 1 serve and, when cooking, for the whole cook.
         const nameHtml = r.recipe
-          ? `<button class="item-name link-plain" data-action="show-recipe" data-id="${r.recipe.id}" ${r.kind === 'recipe' && r.cook ? `data-cook="${r.cook}"` : ''}>${esc(r.label)}</button>`
+          ? `<button class="item-name link-plain" data-action="show-recipe" data-id="${r.recipe.id}" ${toCook ? `data-cook="${cookAmt}" data-why="${esc(cookWhy(r, cookAmt))}"` : ''}>${esc(r.label)}</button>`
           : `<span class="item-name">${esc(r.label)}</span>`;
         html += `<div class="item"><span class="item-mark"></span>
-          <div class="item-main">${nameHtml} ${r.recipe ? lactoseBadge(r.recipe) : ''}${r.sub || larderNote || cookNote(r, cookAmt) ? `<div class="item-sub">${esc([r.sub, cookNote(r, cookAmt), larderNote].filter(Boolean).join(' · '))}</div>` : ''}</div>
+          <div class="item-main">${nameHtml} ${r.recipe ? lactoseBadge(r.recipe) : ''}${sub ? `<div class="item-sub${none ? ' warn-text' : ''}">${esc(sub)}</div>` : ''}</div>
           <span class="item-g">${gram(r.protein)}</span>
           <span class="split edit-only item-act"><button class="btn small primary" data-action="eat" data-slot="${k}" data-item="${sl.id}" data-hold="meal-menu">${batchCook ? 'Cooked &amp; eaten' : 'Eaten'}</button><button class="btn small primary more" data-action="meal-menu" data-slot="${k}" data-item="${sl.id}" aria-label="More options">⋯</button></span></div>`;
       }
@@ -2063,12 +2085,14 @@
     recipeView(m) {
       const r = byId('recipes', m.id);
       if (!r) return `<h2>Recipe not found</h2><div class="row">${cancelBtn('Close')}</div>`;
-      const f = (m.cook || r.servings) / (r.servings || 1);
+      const per = 1 / (r.servings || 1), cook = m.cook > 1 ? m.cook : 0;
+      const amt = (x, k) => { const n = norm((Number(x.qty) || 0) * per * k, x.unit); return esc(fmtQty(round(n.qty, 2), n.unit)); };
       return `<h2>${esc(r.name)}</h2>
-        <p>${lactoseBadge(r)} <span class="muted">${r.proteinPerServingG != null ? `${r.proteinPerServingG} g protein per serving · ` : ''}serves ${r.servings}${r.tags.length ? ' · ' + esc(r.tags.join(', ')) : ''}</span></p>
-        ${f !== 1 ? `<p><b>Quantities for ${m.cook} servings</b></p>` : ''}
+        <p>${lactoseBadge(r)} <span class="muted">${r.proteinPerServingG != null ? `${r.proteinPerServingG} g protein per serve` : ''}${r.tags.length ? (r.proteinPerServingG != null ? ' · ' : '') + esc(r.tags.join(', ')) : ''}</span></p>
+        ${cook ? `<p class="cook-head"><b>Cooking ${cook} serves</b>${m.why ? `<br><span class="muted">${esc(m.why)}</span>` : ''}</p>` : ''}
         <h3>Ingredients</h3>
-        <ul class="ing-list">${r.ingredients.map(x => { const n = norm((Number(x.qty) || 0) * f, x.unit); return `<li>${esc(fmtQty(round(n.qty, 2), n.unit))} ${esc(ingName(x.ingredientId))}</li>`; }).join('')}</ul>
+        <table class="ing-table"><thead><tr><th></th><th>1 serve</th>${cook ? `<th>Cooking ${cook}</th>` : ''}</tr></thead>
+          <tbody>${r.ingredients.map(x => `<tr><td>${esc(ingName(x.ingredientId))}</td><td>${amt(x, 1)}</td>${cook ? `<td><b>${amt(x, cook)}</b></td>` : ''}</tr>`).join('')}</tbody></table>
         ${r.method ? `<h3>Method</h3><p class="method">${esc(r.method)}</p>` : ''}
         <div class="row">${cancelBtn('Close')}</div>`;
     },
@@ -2539,7 +2563,7 @@
       catch (e) { if (e.name !== 'AbortError') toast('Share failed: ' + e.message); }
     },
 
-    'show-recipe'(el) { openModal({ type: 'recipeView', id: el.dataset.id, cook: Number(el.dataset.cook) || null }); },
+    'show-recipe'(el) { openModal({ type: 'recipeView', id: el.dataset.id, cook: Number(el.dataset.cook) || null, why: el.dataset.why || '' }); },
     'drive-role'(el) {
       const toViewer = el.dataset.value === 'viewer';
       if (toViewer === isViewer()) return;

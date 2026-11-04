@@ -176,6 +176,11 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 .ing-row .suggest { grid-column: 1 / -1; grid-row: 2; margin-top: 0; }
 .method { white-space: pre-wrap; color: var(--muted); }
 .ing-list { margin: 6px 0; padding-left: 18px; }
+.ing-table { width: 100%; border-collapse: collapse; margin: 6px 0; font-variant-numeric: tabular-nums; }
+.ing-table th { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); text-align: right; padding: 4px 0 6px 12px; }
+.ing-table td { padding: 6px 0 6px 12px; border-top: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.ing-table td:first-child { text-align: left; white-space: normal; padding-left: 0; }
+.cook-head { margin: 10px 0 12px; }
 
 /* banners */
 .banner { border: 1px solid var(--warn); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); }

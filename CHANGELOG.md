@@ -2,6 +2,16 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.7.0
+
+- **Leftovers say where, not when:** a leftovers meal on Today shows where its portions are ("1 in the Fridge, 4 in the
+  Freezer") in place of "Leftovers from Mon dinner". If there are none (the cook was skipped, or they've been eaten), it
+  says **none in the larder** in orange. Before the cook happens later in the week it says "from the larder once cooked".
+  The Week tab says "from the larder". The cooked date stays on Larder portions for the eat-or-freeze warning.
+- **1 serve and the whole cook:** a recipe opened from Today lists each ingredient for 1 serve, and when that meal is
+  cooking, a second column for the whole cook ("Cooking 6"), headed with what the serves are for. Opened anywhere else
+  it shows the single serve only.
+
 ## 2.6.0
 
 - **One shopping list:** generate any time and the list covers everything still needed up to the end of the week you're

@@ -56,7 +56,11 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
 - **Cooking a batch:** a meal that makes more than you eat shows **Cooked & eaten**. Tap it and say where the other portions
   went (it suggests the fridge for the next 3 days' meals, the rest to the freezer); the ingredients come out of the larder and
   the portions go in, marked 🍲 in their fridge or freezer. Leftovers and later meals of that recipe then just say **Eaten** and take a portion,
-  fridge first. Cooked ahead (Sunday batch)? Use **⋯ → Cooked, eating later**. Undo puts everything back.
+  fridge first. Under them it says where the portions are ("1 in the Fridge, 4 in the Freezer"), or **none in the larder** in orange
+  if the cook was skipped or they've been eaten. Cooked ahead (Sunday batch)? Use **⋯ → Cooked, eating later**. Undo puts everything back.
+- **How much to put in:** tap a meal's name on Today to open its recipe. Each ingredient shows for **1 serve**; a meal you're
+  cooking adds a **Cooking 6** column with the amounts for the whole cook, and says what they're for (this meal, leftovers,
+  spare for the larder).
 - **Keep at least:** for things you never want to run out of (kitty litter, dog biscuits, rice), tap the item in the Larder
   and set **Keep at least**, e.g. 2 bags. It counts across every location. When what's left after the week's meals would
   drop below it, the list tops it up ("keep at least 2 bag" under the line). In the Larder, "Min: 2 bag" sits under the amount
