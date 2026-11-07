@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.7.0';
+  const APP_VERSION = '2.8.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -504,6 +504,11 @@
     const extra = new Set();
     S.ingredients.forEach(i => i.store && !settings.stores.includes(i.store) && extra.add(i.store));
     return [...settings.stores, ...[...extra].sort(), 'Other'];
+  }
+  // The shopping-list section an item sits in: its store, or Other for a store not in the list.
+  function shopBucket(it) {
+    const s = itemInfo(it).store, order = storeOrder();
+    return order.slice(0, -1).includes(s) ? s : 'Other';
   }
 
   // ---------- larder ----------
@@ -1663,19 +1668,24 @@
       html += `<div class="card"><div class="totals"><span>${left ? `<b>${left}</b> to get` : '<b>All done</b>'} <span class="muted">of ${items.length}</span></span>
         ${priced.length ? `<span><b>${money(total)}</b> <span class="muted">est.</span></span>` : ''}</div>
         ${priced.length ? `<div class="sub">${money(ticked)} in the trolley · ${money(local)} local (${total ? Math.round(local / total * 100) : 0}%)</div>` : ''}
-        <button class="btn small ${ui.hideTicked ? 'primary' : ''}" style="margin-top:8px" data-action="hide-ticked">${ui.hideTicked ? 'Show' : 'Hide'} ticked items</button></div>`;
+        <div class="row" style="margin-top:8px"><button class="btn small ${ui.hideTicked ? 'primary' : ''}" data-action="hide-ticked">${ui.hideTicked ? 'Show' : 'Hide'} ticked items</button>
+        ${shopStoresIn(items).length > 1 ? `<button class="btn small" data-action="shop-fold-all">${shopStoresIn(items).some(st => !shopClosed().includes(st)) ? 'Collapse' : 'Expand'} all stores</button>` : ''}</div></div>`;
     }
     html += `<div class="row edit-only"><button class="btn" data-action="regenerate">${items.length ? 'Regenerate' : 'Generate from plan'}</button>
       <button class="btn" data-action="add-item">+ Add item</button></div>`;
     if (!items.length) return html + `<div class="card empty"><p>No list for this week yet.</p><p class="muted">Plan the week, then tap Generate.</p></div>`;
 
     html += '<div class="grid stores">';
+    const closed = shopClosed();
     for (const store of storeOrder()) {
-      const inStore = items.filter(i => itemInfo(i).store === store || (store === 'Other' && !storeOrder().slice(0, -1).includes(itemInfo(i).store)));
+      const inStore = items.filter(i => shopBucket(i) === store);
       if (!inStore.length) continue;
       const shown = inStore.filter(i => !(ui.hideTicked && i.checked));
       const storeTotal = inStore.filter(i => i.price != null && i.price !== '').reduce((t, i) => t + Number(i.price), 0);
-      html += `<section><div class="store-head"><h2>${esc(store)}</h2><span class="muted">${inStore.filter(i => i.checked).length} of ${inStore.length} in trolley${storeTotal ? ` · <b class="store-total">${money(storeTotal)}</b>` : ''}</span></div>`;
+      const got = inStore.filter(i => i.checked).length;
+      // Each store folds; the fold is remembered per store on this device (new stores start open).
+      html += `<details class="shop-store ${got === inStore.length ? 'done' : ''}" data-store="${esc(store)}" ${closed.includes(store) ? '' : 'open'}>
+        <summary class="store-head"><h2>${esc(store)}</h2><span class="muted">${got === inStore.length ? '✓ ' : ''}${got} of ${inStore.length} in trolley${storeTotal ? ` · <b class="store-total">${money(storeTotal)}</b>` : ''}</span></summary>`;
       const aisles = [...new Set(shown.map(i => itemInfo(i).aisle))].sort((a, b) => (a || '~').localeCompare(b || '~', undefined, { numeric: true }));
       for (const a of aisles) {
         const rows = shown.filter(i => itemInfo(i).aisle === a)
@@ -1691,10 +1701,15 @@
             <button class="si-more edit-only" data-action="edit-item" data-id="${it.id}" aria-label="Edit ${esc(x.name)}">$</button></div>`;
         }).join('');
       }
-      html += '</section>';
+      html += '</details>';
     }
     return html + '</div>';
   }
+  // Which stores on the shopping list are folded shut, kept on this device only.
+  function shopClosed() { try { return JSON.parse(localStorage.getItem(LS + 'shopClosed') || '[]'); } catch (e) { return []; } }
+  function setShopClosed(list) { try { localStorage.setItem(LS + 'shopClosed', JSON.stringify([...new Set(list)])); } catch (e) { /* ignore */ } }
+  function setShopOpen(store, isOpen) { setShopClosed(shopClosed().filter(s => s !== store).concat(isOpen ? [] : [store])); }
+  function shopStoresIn(items) { return storeOrder().filter(st => items.some(i => shopBucket(i) === st)); }
 
   // ---------- Larder ----------
   function locOf(p) { return p.location || (byId('ingredients', p.ingredientId) || {}).location || ''; }
@@ -2382,11 +2397,20 @@
       const n = generateShopping(ui.shopWeek); render(); toast(`${n} items, ticks kept`);
     },
     'hide-ticked'() { ui.hideTicked = !ui.hideTicked; render(); },
+    'shop-fold-all'() {
+      const stores = shopStoresIn(S.shoppingItems.filter(i => i.weekStart === ui.shopWeek)), closed = shopClosed();
+      const anyOpen = stores.some(st => !closed.includes(st));
+      setShopClosed(anyOpen ? closed.concat(stores) : closed.filter(st => !stores.includes(st)));
+      render();
+    },
     tick(el) {
       const it = byId('shoppingItems', el.dataset.id);
       it.checked = !it.checked;
       if (it.checked) larderIn(it); else larderOut(it);
       put('shoppingItems', it);
+      // The last item in a store ticked: fold the store away, so the next one is easy to find.
+      const store = shopBucket(it);
+      if (it.checked && S.shoppingItems.filter(i => i.weekStart === it.weekStart && shopBucket(i) === store).every(i => i.checked)) setShopOpen(store, false);
       if (navigator.vibrate) try { navigator.vibrate(15); } catch (e) { /* ignore */ }
       render();
     },
@@ -2646,7 +2670,7 @@
   }
 
   // ---------- events ----------
-  const VIEWER_OK = new Set(['view', 'menu', 'close-modal', 'day', 'goto-week', 'week', 'shop-week', 'hide-ticked', 'recipe-tag',
+  const VIEWER_OK = new Set(['view', 'menu', 'close-modal', 'day', 'goto-week', 'week', 'shop-week', 'hide-ticked', 'shop-fold-all', 'recipe-tag',
     'edit-recipe', 'edit-slot', 'show-recipe', 'drive', 'drive-sync', 'drive-find', 'drive-signout', 'drive-role', 'export', 'share', 'ics', 'enable-notify']);
   // ---------- gestures ----------
   // Hold a button with data-hold for its second action. Swipe sideways on Today to change day,
@@ -2756,6 +2780,7 @@
   document.addEventListener('toggle', e => {
     const el = e.target;
     if (el.classList && el.classList.contains('larder-loc') && !el.hasAttribute('data-search')) setLarderOpen(el.dataset.loc, el.open);
+    if (el.classList && el.classList.contains('shop-store')) setShopOpen(el.dataset.store, el.open);
   }, true);
   document.addEventListener('change', e => {
     const el = e.target;

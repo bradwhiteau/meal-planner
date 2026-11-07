@@ -141,6 +141,11 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 /* shop */
 .store-head { display: flex; justify-content: space-between; align-items: baseline; margin: 22px 0 4px; }
 .store-head h2 { font-size: 1.3rem; }
+.shop-store > summary { cursor: pointer; list-style: none; align-items: center; gap: 8px; margin: 10px 0 4px; padding: 6px 0; }
+.shop-store > summary::-webkit-details-marker { display: none; }
+.shop-store > summary h2::before { content: '▸'; display: inline-block; width: 1.1em; color: var(--muted); transition: transform .15s; text-align: center; }
+.shop-store[open] > summary h2::before { transform: rotate(90deg); }
+.shop-store.done > summary h2 { color: var(--muted); }
 .aisle { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 12px 0 4px; }
 .shop-row { display: flex; align-items: stretch; gap: 6px; margin: 6px 0; }
 .shop-item {

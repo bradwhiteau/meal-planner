@@ -2,6 +2,15 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.8.0
+
+- **Stores fold:** on the Shopping list, tap a store's heading to fold it shut or open it again. The heading still shows
+  how many are in the trolley and the store's total. Each phone remembers which stores you left shut; a store it hasn't
+  seen starts open.
+- **Done stores fold away:** ticking the last item in a store shuts it and marks it ✓, so the store you're in is easy
+  to find. Open it again any time.
+- **Expand all / Collapse all stores:** one button next to "Hide ticked items".
+
 ## 2.7.0
 
 - **Leftovers say where, not when:** a leftovers meal on Today shows where its portions are ("1 in the Fridge, 4 in the

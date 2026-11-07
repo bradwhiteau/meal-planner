@@ -101,7 +101,13 @@
         return el;
       },
       card: slot => $$('.card.meal').find(x => x.querySelector('.slot-label').innerText.trim().toLowerCase() === slot),
-      shopRow: name => $$('.shop-row').find(r => r.innerText.includes(name)),
+      // A shopping-list line, by name (its store is opened if folded, so the text shows).
+      shopRow: name => {
+        const r = $$('.shop-row').find(r => r.textContent.includes(name)), st = r && r.closest('.shop-store');
+        if (st && !st.open) st.open = true;
+        return r;
+      },
+      store: name => $$('.shop-store').find(x => x.dataset.store === name),
       shopText: name => { const r = c.shopRow(name); return r ? r.innerText.replace(/\s*\n\s*/g, ' | ') : '(no line)'; },
     };
     return c;
@@ -608,7 +614,7 @@
     await c.click(c.shopRow('Kitty litter').querySelector('[data-action="tick"]'), 150);
     t.ok('Bought: back to 2 bags', (await c.larder()).includes('litter:2bag@Pantry Ground'), await c.larder());
     await c.click('[data-action="regenerate"]', 300);
-    t.eq('Regenerated: just the ticked line', c.$$('.shop-row').filter(r => r.innerText.includes('Kitty litter')).map(r => !!r.querySelector('.shop-item.checked')), [true]);
+    t.eq('Regenerated: just the ticked line', c.$$('.shop-row').filter(r => r.textContent.includes('Kitty litter')).map(r => !!r.querySelector('.shop-item.checked')), [true]);
     // Clearing it.
     await c.tab('pantry');
     await c.click(c.loc('Pantry Ground').querySelector('[data-action="edit-pantry"]'));
@@ -734,6 +740,43 @@
     await c.click(c.loc('Fridge').querySelector('[data-action="edit-pantry"][data-id="odd"]'));
     t.eq('An odd unit already set is kept but labelled', [...c.$('#modal [data-m="draft.unit"]').options].map(o => o.textContent), ['each', "cans (doesn't match recipes)"]);
     await c.click('[data-action="close-modal"]');
+  });
+
+  scenario('Store folds: each store opens and shuts, remembered (2.8.0)', async (c, t) => {
+    await c.importJson(patch({
+      ingredients: [mk('milk', { name: 'Milk', defaultUnit: 'L', store: 'Supermarket', aisle: '2' }),
+        mk('bread', { name: 'Bread', defaultUnit: 'each', store: 'Supermarket', aisle: '3' }),
+        mk('steak', { name: 'Steak', defaultUnit: 'g', store: 'Butcher', aisle: 'Meat' })],
+      shoppingItems: [mk('s1', { weekStart: day(0), ingredientId: 'milk', text: null, qty: 2, unit: 'L', checked: false, manual: false }),
+        mk('s2', { weekStart: day(0), ingredientId: 'bread', text: null, qty: 1, unit: 'each', checked: false, manual: false }),
+        mk('s3', { weekStart: day(0), ingredientId: 'steak', text: null, qty: 500, unit: 'g', checked: false, manual: false })],
+    }));
+    await c.shop(day(0));
+    const opens = () => c.$$('.shop-store').map(x => x.dataset.store + ':' + (x.open ? 'open' : 'shut'));
+    const head = name => c.store(name).querySelector('summary').innerText.replace(/\s+/g, ' ');
+    t.eq('Every store starts open', opens(), ['Butcher:open', 'Supermarket:open']);
+    c.store('Butcher').querySelector('summary').click(); await sleep(60);
+    t.eq('Tapping a store\'s heading shuts it', opens(), ['Butcher:shut', 'Supermarket:open']);
+    t.has('…and the heading still shows its progress', head('Butcher'), '0 of 1 in trolley');
+    await c.click('[data-action="tick"][data-id="s1"]', 150);
+    t.eq('Ticking something keeps the folds as they were', opens(), ['Butcher:shut', 'Supermarket:open']);
+    await c.shop(day(7)); await c.shop(day(0));
+    t.eq('Leaving and coming back keeps them too', opens(), ['Butcher:shut', 'Supermarket:open']);
+    await c.click('[data-action="tick"][data-id="s2"]', 150);
+    t.eq('Ticking the last thing in a store shuts it', opens(), ['Butcher:shut', 'Supermarket:shut']);
+    t.has('…marked done', head('Supermarket'), '✓ 2 of 2');
+    await c.click('[data-action="tick"][data-id="s2"]', 150);
+    t.eq('Unticking leaves it as it is', opens(), ['Butcher:shut', 'Supermarket:shut']);
+    t.has('One button: Expand all (everything is shut)', c.$('[data-action="shop-fold-all"]').innerText, 'Expand all');
+    await c.click('[data-action="shop-fold-all"]', 100);
+    t.eq('Expand all opens every store', opens(), ['Butcher:open', 'Supermarket:open']);
+    t.has('…and the button now says Collapse all', c.$('[data-action="shop-fold-all"]').innerText, 'Collapse all');
+    await c.click('[data-action="shop-fold-all"]', 100);
+    t.eq('Collapse all shuts every store', opens(), ['Butcher:shut', 'Supermarket:shut']);
+    t.eq('Kept on this device', JSON.parse(localStorage.getItem('mpt.shopClosed')).sort(), ['Butcher', 'Supermarket']);
+    c.store('Butcher').querySelector('summary').click(); await sleep(60);
+    await c.shop(day(7)); await c.shop(day(0));
+    t.eq('Opening one by hand is remembered', opens(), ['Butcher:open', 'Supermarket:shut']);
   });
 
   scenario('A meal card holding only extra food (crash fixed in 2.0.2)', async (c, t) => {
