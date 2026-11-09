@@ -2,6 +2,16 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.9.0
+
+- **Take it out of the freezer:** the evening before a meal is cooked, Today's prep checks its ingredients. If the
+  fridge and pantry don't hold enough but a freezer does, it says "Take 300 g Costco beef bulgogi out of the Chest
+  Freezer to thaw in the fridge", with **Move to fridge** to move it in the Larder. Packs, tins and pieces come out
+  whole. Meals eaten from cooked portions keep their own "Move N × … to the fridge" reminder.
+- **Cook from frozen:** tick it on an ingredient (frozen peas, chips) and it never gets a thaw reminder.
+- **Night before:** a recipe can carry a note, e.g. "Cook the rice" on Bulgogi. It shows in the evening prep (and the
+  calendar file) the day before that recipe is cooked.
+
 ## 2.8.0
 
 - **Stores fold:** on the Shopping list, tap a store's heading to fold it shut or open it again. The heading still shows

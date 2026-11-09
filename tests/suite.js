@@ -443,6 +443,57 @@
     t.eq('Bought 2.35 kg: the larder holds what was actually bought', (await c.larder()).filter(x => x.startsWith('bulg')), ['bulg:2350g@']);
   });
 
+  scenario('Bulgogi night before: take frozen ingredients out, and the recipe\'s own note (2.9.0)', async (c, t) => {
+    await c.importJson(patch({
+      ingredients: [mk('bulg', { name: 'Costco beef bulgogi', defaultUnit: 'g', store: 'Costco', aisle: 'Ready meals', location: 'Chest Freezer' }),
+        mk('rice', { name: 'Jasmine rice', defaultUnit: 'g', store: 'Costco', aisle: '310', location: 'Pantry Shelf 1' }),
+        mk('peas', { name: 'Frozen peas', defaultUnit: 'g', store: 'Supermarket', aisle: 'Frozen', location: 'Freezer', cookFromFrozen: true }),
+        mk('pies', { name: 'Party pies', defaultUnit: 'pack', store: 'Supermarket', aisle: 'Frozen', location: 'Freezer', cookFromFrozen: 'yes' })],
+      recipes: [mk('bul', { name: 'Bulgogi', servings: 1, proteinPerServingG: 54, lactose: 'none', tags: ['Costco ready-meal'], method: '', nightBefore: 'Cook the rice',
+        ingredients: [{ ingredientId: 'bulg', qty: 300, unit: 'g' }, { ingredientId: 'rice', qty: 100, unit: 'g' }] }),
+      mk('fr', { name: 'Fried rice', servings: 2, proteinPerServingG: 20, lactose: 'none', tags: [], method: '', nightBefore: 7,
+        ingredients: [{ ingredientId: 'peas', qty: 200, unit: 'g' }, { ingredientId: 'rice', qty: 200, unit: 'g' }] }),
+      mk('pie', { name: 'Pie night', servings: 4, proteinPerServingG: 20, lactose: 'none', tags: [], method: '',
+        ingredients: [{ ingredientId: 'pies', qty: 1.5, unit: 'pack' }] })],
+      pantryItems: [mk('p1', { ingredientId: 'bulg', qty: 1, unit: 'kg', location: 'Chest Freezer' }),
+        mk('p2', { ingredientId: 'bulg', qty: 100, unit: 'g', location: 'Fridge' }),
+        mk('p3', { ingredientId: 'rice', qty: 2000, unit: 'g', location: 'Pantry Shelf 1' }),
+        mk('p4', { ingredientId: 'peas', qty: 500, unit: 'g', location: 'Freezer' }),
+        mk('p5', { ingredientId: 'pies', qty: 3, unit: 'pack', location: '' })],
+      weekPlans: [weekPlan('w0', 0, {
+        2: { dinner: { recipeId: 'bul', servings: 1, cook: null } },
+        3: { dinner: { recipeId: 'fr', servings: 2, cook: null } },
+        4: { dinner: { recipeId: 'pie', servings: 4, cook: null } } })],
+    }));
+    const ings = await c.all('ingredients'), recs = await c.all('recipes');
+    t.eq('Import keeps cookFromFrozen: true, drops a junk value', [ings.find(i => i.id === 'peas').cookFromFrozen, 'cookFromFrozen' in ings.find(i => i.id === 'pies')], [true, false]);
+    t.eq('Import keeps a Night before note, drops a junk one', [recs.find(r => r.id === 'bul').nightBefore, 'nightBefore' in recs.find(r => r.id === 'fr')], ['Cook the rice', false]);
+    const prep = () => (c.$('.card.prep') ? c.$('.card.prep').innerText : '');
+    await c.go(day(1));
+    t.has('Night before the bulgogi: the recipe\'s note', prep(), "Cook the rice (for tomorrow's Bulgogi)");
+    t.has('…and take out what the fridge is short (300 g less 100 g already there)', prep(), 'Take 200 g Costco beef bulgogi out of the Chest Freezer to thaw in the fridge');
+    t.ok('Rice in the pantry: no thaw reminder', !prep().includes('Jasmine rice'));
+    await c.click('[data-action="thaw-stock"]', 150);
+    t.eq('Move to fridge moves the 200 g', (await c.larder()).filter(x => x.startsWith('bulg')), ['bulg:0.8kg@Chest Freezer', 'bulg:300g@Fridge']);
+    t.ok('…and the reminder goes', !prep().includes('Take') && !c.$('[data-action="thaw-stock"]'));
+    t.has('The note stays', prep(), 'Cook the rice');
+    await c.go(day(2));
+    t.ok('Frozen peas are cooked from frozen: no reminder', !prep().includes('Frozen peas'));
+    await c.go(day(3));
+    t.has('Count units take whole packs: 1.5 → 2, from the ingredient\'s usual freezer', prep(), 'Take 2 pack Party pies out of the Freezer to thaw in the fridge');
+    await c.importJson(patch({ ingredients: [mk('pies', { name: 'Party pies', defaultUnit: 'pack', store: 'Supermarket', aisle: 'Frozen', location: 'Freezer', cookFromFrozen: true,
+      updatedAt: new Date(Date.now() + 5000).toISOString() })] }));
+    await c.go(day(3));
+    t.ok('Ticking Cook from frozen stops it', !prep().includes('Party pies'));
+    // Once the bulgogi is cooked, the night before has nothing left to say about it.
+    await c.go(day(2));
+    await c.click(c.card('dinner').querySelector('[data-action="eat"]'), 150);
+    if (!c.$('#modal').hidden && c.$('[data-action="save-cook"]')) await c.click('[data-action="save-cook"]', 150);
+    await c.go(day(1));
+    t.ok('Cooked: no note or thaw for it', !prep().includes('Bulgogi') && !prep().includes('bulgogi'));
+    t.eq('Cooking took the fridge bulgogi first', (await c.larder()).filter(x => x.startsWith('bulg')), ['bulg:0.8kg@Chest Freezer', 'bulg:0g@Fridge']);
+  });
+
   scenario('Shake and eggs: several items in one meal (2.5.0)', async (c, t) => {
     const shakeEggs = updatedAt => patch({ weekPlans: [Object.assign(weekPlan('w0', 0, {
       0: { breakfast: [{ id: 'sh', recipeId: 'shake', servings: 1, cook: null }, { id: 'eg', recipeId: 'egg', servings: 1, cook: null }],

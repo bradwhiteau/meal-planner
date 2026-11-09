@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.8.0';
+  const APP_VERSION = '2.9.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -661,7 +661,7 @@
   function nightBeforeTasks(date) {
     const tmr = addDays(date, 1), { plan, i } = locateDay(tmr), out = [];
     if (i < 0) return out;
-    const alloc = weekAlloc(mondayOf(tmr)), done = loggedItems(), want = new Map();
+    const alloc = weekAlloc(mondayOf(tmr)), done = loggedItems(), want = new Map(), cookNeed = new Map(), notes = new Set();
     for (const k of SLOTS) for (const x of itemsOf(plan.days[i], k)) {
       const r = resolveItem(plan, i, k, x), key = itemKey(tmr, k, x.id);
       if (k === 'breakfast' && r.kind === 'recipe' && r.recipe.tags.includes('rice cooker'))
@@ -671,7 +671,19 @@
         want.set(r.recipe.id, (want.get(r.recipe.id) || 0) + r.servings);
       else if (r.kind === 'leftover' && r.freezer)
         out.push({ key: `freezer-${k}-${x.id}`, text: `Move tomorrow's ${k} (${r.label}) from the freezer to the fridge` });
+      else if (r.kind === 'recipe' && !done.has(key)) {
+        // A cook tomorrow: its "Night before" note, and the ingredients it takes (for the thaw check below).
+        const note = (r.recipe.nightBefore || '').trim();
+        if (note && !notes.has(r.recipe.id)) { notes.add(r.recipe.id); out.push({ key: 'note-' + r.recipe.id, text: `${note} (for tomorrow's ${r.label})` }); }
+        const f = alloc.slotCook[key] / (r.recipe.servings || 1);
+        for (const ing of r.recipe.ingredients) {
+          const n = norm((Number(ing.qty) || 0) * f, ing.unit), nk = ing.ingredientId + '|' + n.unit;
+          const cur = cookNeed.get(nk) || { ingredientId: ing.ingredientId, unit: n.unit, measured: n.measured, qty: 0 };
+          cur.qty += n.qty; cookNeed.set(nk, cur);
+        }
+      }
     }
+    out.push(...thawTasks(cookNeed));
     for (const [rid, n] of want) {
       const rows = portionRows(rid), inFridge = rows.filter(x => isFridge(x.location)).reduce((t, x) => t + Number(x.qty), 0);
       const frozen = rows.filter(x => isFreezer(x.location)).reduce((t, x) => t + Number(x.qty), 0);
@@ -679,6 +691,38 @@
       if (m > 0) out.push({ key: 'move-' + rid, text: `Move ${m} × ${(byId('recipes', rid) || {}).name} from the freezer to the fridge`, move: { recipeId: rid, n: m } });
     }
     return out;
+  }
+  // Frozen ingredients for tomorrow's cooks: when the fridge and pantry don't hold enough but a freezer does, take
+  // what's short out to thaw in the fridge. Ingredients marked "Cook from frozen" (peas, chips) are left alone.
+  function thawTasks(cookNeed) {
+    const out = [];
+    for (const nd of cookNeed.values()) {
+      const ing = byId('ingredients', nd.ingredientId);
+      if (!ing || ing.cookFromFrozen || !(nd.qty > 0)) continue;
+      const rows = larderRows(nd.ingredientId, nd.unit).filter(p => Number(p.qty) > 0), base = p => norm(Number(p.qty), p.unit).qty;
+      const cold = rows.filter(p => isFreezer(locOf(p))), thawed = rows.filter(p => !isFreezer(locOf(p))).reduce((t, p) => t + base(p), 0);
+      const frozen = cold.reduce((t, p) => t + base(p), 0);
+      let m = Math.min(Math.max(0, nd.qty - thawed), frozen);
+      if (!nd.measured) m = Math.min(Math.ceil(m - 0.001), frozen);   // whole packs, tins, pieces
+      m = round(m, 3);
+      if (!(m > 0.001)) continue;
+      const where = [...new Set(cold.map(locOf))].join(' and '), amt = nd.unit === 'each' ? `${m} ×` : fmtQty(m, nd.unit);
+      out.push({ key: 'thaw-' + nd.ingredientId, text: `Take ${amt} ${ing.name} out of the ${where} to thaw in the fridge`,
+        thaw: { ingredientId: nd.ingredientId, qty: m, unit: nd.unit } });
+    }
+    return out;
+  }
+  // Moves up to qty (base unit) of an ingredient from the freezers to the fridge. Returns how much moved.
+  function thawStock(ingredientId, qty, unit) {
+    let left = norm(qty, unit).qty, moved = 0;
+    for (const p of larderRows(ingredientId, unit).filter(x => isFreezer(locOf(x)))) {
+      const per = norm(1, p.unit).qty, have = (Number(p.qty) || 0) * per, t = Math.min(have, left);
+      if (!(t > 0)) continue;
+      p.qty = round((have - t) / per, 3); put('pantryItems', p);
+      left -= t; moved += t;
+    }
+    if (moved > 0) pantryAdd(ingredientId, round(moved, 3), norm(1, unit).unit, fridgeLoc());
+    return round(moved, 3);
   }
   function batchCookTask(date) {
     if (parseYmd(date).getDay() !== 0) return null;
@@ -806,6 +850,7 @@
       if (r.packPrice != null && !(Number(r.packPrice) >= 0)) delete r.packPrice;
       if (r.location != null && !isStr(r.location)) delete r.location;
       if (!(Number(r.keepQty) > 0) || !isStr(r.keepUnit) || !r.keepUnit.trim()) { delete r.keepQty; delete r.keepUnit; }
+      if (r.cookFromFrozen !== true) delete r.cookFromFrozen;
       return true;
     },
     recipes: r => {
@@ -814,6 +859,7 @@
       r.lactose = LACTOSE[r.lactose] ? r.lactose : 'none';
       r.servings = Number(r.servings) > 0 ? Number(r.servings) : 1;
       r.method = isStr(r.method) ? r.method : '';
+      if (!isStr(r.nightBefore) || !r.nightBefore.trim()) delete r.nightBefore;
       return true;
     },
     weekPlans: r => {
@@ -1571,7 +1617,7 @@
       const hm = ms => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
       const recipeName = id => (byId('recipes', id) || {}).name || 'Meal';
       html += `<div class="card prep"><span class="slot-label">${isToday ? "Today's prep" : 'Prep'}</span>
-        <ul class="ing-list">${prep.map(t => `<li><b>${hm(t.at)}</b> ${esc(t.text)}${t.move ? ` <button class="btn small edit-only" data-action="move-portions" data-recipe="${t.move.recipeId}" data-n="${t.move.n}">Move to fridge</button>` : ''}</li>`).join('')}
+        <ul class="ing-list">${prep.map(t => `<li><b>${hm(t.at)}</b> ${esc(t.text)}${t.move ? ` <button class="btn small edit-only" data-action="move-portions" data-recipe="${t.move.recipeId}" data-n="${t.move.n}">Move to fridge</button>` : ''}${t.thaw ? ` <button class="btn small edit-only" data-action="thaw-stock" data-ing="${esc(t.thaw.ingredientId)}" data-qty="${t.thaw.qty}" data-unit="${esc(t.thaw.unit)}">Move to fridge</button>` : ''}</li>`).join('')}
         ${old.map(x => `<li class="warn-text">${esc(recipeName(x.recipeId))} ×${x.qty} in the ${esc(x.location)} since ${fmtDate(x.cookedOn)}: eat or freeze
           <button class="btn small edit-only" data-action="freeze-portion" data-id="${x.id}">Freeze</button></li>`).join('')}</ul></div>`;
     }
@@ -2024,6 +2070,8 @@
           <button class="btn small" data-action="add-ing">+ Ingredient</button>
           <p class="muted">Units: g, kg, ml, L, or anything else (each, tin, pack). New names create a new ingredient.</p></div>
         ${field('Method', `<textarea rows="4" data-m="draft.method">${esc(d.method)}</textarea>`)}
+        ${field('Night before (optional)', `<input type="text" data-m="draft.nightBefore" value="${esc(d.nightBefore || '')}" placeholder="e.g. Cook the rice">`)}
+        <p class="muted">Shows in the evening prep the day before this recipe is cooked. Frozen ingredients get their own "take it out" reminder.</p>
         <div class="row"><button class="btn primary" data-action="save-recipe">Save</button>
           ${m.id ? `<button class="btn danger" data-action="delete-recipe">Delete</button>` : ''}${cancelBtn()}</div>`;
     },
@@ -2040,6 +2088,7 @@
           ${pack ? field('Price per pack ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.packPrice" data-type="num" value="${esc(d.packPrice == null ? '' : d.packPrice)}">`)
             : field('Last price ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.lastPrice" data-type="num" value="${esc(d.lastPrice == null ? '' : d.lastPrice)}">`)}</div>
         <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local (bought from a local producer)</label>
+        <label class="toggle"><input type="checkbox" data-m="draft.cookFromFrozen" ${d.cookFromFrozen ? 'checked' : ''}> Cook from frozen (no reminder to thaw it)</label>
         <p class="muted">With a pack size, the shopping list buys whole packs and prices them per pack.</p>
         <div class="row"><button class="btn primary" data-action="save-ingredient">Save</button>
           <button class="btn danger" data-action="delete-ingredient">Delete</button>${cancelBtn()}</div>`;
@@ -2108,6 +2157,7 @@
         <h3>Ingredients</h3>
         <table class="ing-table"><thead><tr><th></th><th>1 serve</th>${cook ? `<th>Cooking ${cook}</th>` : ''}</tr></thead>
           <tbody>${r.ingredients.map(x => `<tr><td>${esc(ingName(x.ingredientId))}</td><td>${amt(x, 1)}</td>${cook ? `<td><b>${amt(x, cook)}</b></td>` : ''}</tr>`).join('')}</tbody></table>
+        ${r.nightBefore ? `<p><b>Night before:</b> ${esc(r.nightBefore)}</p>` : ''}
         ${r.method ? `<h3>Method</h3><p class="method">${esc(r.method)}</p>` : ''}
         <div class="row">${cancelBtn('Close')}</div>`;
     },
@@ -2240,6 +2290,10 @@
     'move-portions'(el) {
       const n = movePortions(el.dataset.recipe, Number(el.dataset.n), isFreezer, fridgeLoc());
       toast(n ? `Moved ${n} to the ${fridgeLoc().toLowerCase()}` : 'Nothing in the freezer to move'); render();
+    },
+    'thaw-stock'(el) {
+      const ing = byId('ingredients', el.dataset.ing), n = thawStock(el.dataset.ing, Number(el.dataset.qty), el.dataset.unit);
+      toast(n ? `${ing ? ing.name : 'Moved'} to the ${fridgeLoc().toLowerCase()}` : 'Nothing in the freezer to move'); render();
     },
     'freeze-portion'(el) {
       const x = byId('pantryItems', el.dataset.id);
@@ -2542,6 +2596,8 @@
       });
       const r = m.id ? byId('recipes', m.id) : {};
       Object.assign(r, { name: d.name.trim(), servings: Number(d.servings) || 1, proteinPerServingG: d.proteinPerServingG, lactose: d.lactose, tags: d.tags, method: d.method || '', ingredients });
+      const nb = String(d.nightBefore || '').trim();
+      if (nb) r.nightBefore = nb; else delete r.nightBefore;
       put('recipes', r); closeModal();
       if (created) toast(`${created} new ingredient${created > 1 ? 's' : ''}: set the store in Ingredients`);
     },
@@ -2561,6 +2617,7 @@
       const pq = Number(d.packQty) > 0 ? Number(d.packQty) : null, pu = String(d.packUnit || '').trim();
       if (pq && pu) Object.assign(i, { packQty: pq, packUnit: pu, packPrice: hasNum(d.packPrice) ? Number(d.packPrice) : null });
       else { delete i.packQty; delete i.packUnit; }
+      if (d.cookFromFrozen) i.cookFromFrozen = true; else delete i.cookFromFrozen;
       put('ingredients', i); closeModal();
     },
     'delete-ingredient'() {
