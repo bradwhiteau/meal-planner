@@ -494,6 +494,33 @@
     t.eq('Cooking took the fridge bulgogi first', (await c.larder()).filter(x => x.startsWith('bulg')), ['bulg:0.8kg@Chest Freezer', 'bulg:0g@Fridge']);
   });
 
+  scenario('Ice cream: a recipe eaten from frozen stays in the freezer (2.10.0)', async (c, t) => {
+    const cream = (eatFrozen, updatedAt) => mk('ice', { name: 'Ice cream (CREAMi)', servings: 1, proteinPerServingG: 28, lactose: 'low', tags: [], method: '',
+      eatFrozen, ingredients: [{ ingredientId: 'wpi', qty: 30, unit: 'g' }], ...(updatedAt ? { updatedAt } : {}) });
+    await c.importJson(patch({
+      ingredients: [mk('wpi', { name: 'WPI protein powder', defaultUnit: 'g', store: 'Costco', aisle: '1', location: 'Pantry Shelf 4' })],
+      recipes: [cream(true), mk('junk', { name: 'Junk flag', servings: 1, lactose: 'none', tags: [], method: '', eatFrozen: 'yes', ingredients: [] })],
+      pantryItems: [mk('p1', { ingredientId: 'wpi', qty: 500, unit: 'g', location: 'Pantry Shelf 4' })],
+      weekPlans: [weekPlan('w0', 0, {
+        0: { snack: { id: 'ic', recipeId: 'ice', servings: 1, cook: null } },
+        2: { snack: { leftoverOf: { day: 0, slot: 'snack', item: 'ic' }, servings: 1 } } })],
+    }));
+    const recs = await c.all('recipes');
+    t.eq('Import keeps eatFrozen: true, drops a junk value', [recs.find(r => r.id === 'ice').eatFrozen, 'eatFrozen' in recs.find(r => r.id === 'junk')], [true, false]);
+    await c.go(day(0));
+    await c.click(c.card('snack').querySelector('[data-action="eat"]'), 120);
+    t.has('Cook sheet puts nothing in the fridge, even for Wednesday', c.modalText(), 'Fridge | − | 0 | +');
+    t.has('…and the spare in the freezer', c.modalText(), 'Freezer | − | 1 | +');
+    await c.click('[data-action="save-cook"]', 200);
+    t.eq('The spare serve is in the freezer', (await c.larder()).filter(x => x.startsWith('🍲')), ['🍲ice×1@Freezer']);
+    const prep = () => (c.$('.card.prep') ? c.$('.card.prep').innerText : '');
+    await c.go(day(1));
+    t.ok('Night before: no move-to-fridge for ice cream', !prep().includes('Ice cream') && !c.$('[data-action="move-portions"]'));
+    await c.importJson(patch({ recipes: [cream(false, new Date(Date.now() + 5000).toISOString())] }));
+    await c.go(day(1));
+    t.has('Without the tick it would move it (as for any frozen meal)', prep(), 'Move 1 × Ice cream (CREAMi) from the freezer to the fridge');
+  });
+
   scenario('Shake and eggs: several items in one meal (2.5.0)', async (c, t) => {
     const shakeEggs = updatedAt => patch({ weekPlans: [Object.assign(weekPlan('w0', 0, {
       0: { breakfast: [{ id: 'sh', recipeId: 'shake', servings: 1, cook: null }, { id: 'eg', recipeId: 'egg', servings: 1, cook: null }],

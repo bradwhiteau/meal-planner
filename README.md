@@ -116,7 +116,7 @@ Changes are made on the phone only. Only one device, the phone, should be the **
 | Reminder | When |
 |---|---|
 | Load the rice cooker | Evening before a breakfast recipe tagged *rice cooker* |
-| Move the freezer portion to the fridge | Evening before a leftovers slot marked *from the freezer* (set automatically for batch recipes 3+ days later) |
+| Move the freezer portion to the fridge | Evening before a leftovers slot marked *from the freezer* (set automatically for batch recipes 3+ days later). Not for recipes ticked *Eaten from frozen* (ice cream) |
 | Take a frozen ingredient out to thaw | Evening before a meal that cooks with it, when the fridge and pantry don't hold enough but a freezer does (**Move to fridge** moves it in the Larder). Not for ingredients ticked *Cook from frozen* |
 | The recipe's *Night before* note (e.g. "Cook the rice") | Evening before that recipe is cooked |
 | Sunday batch cook | Sunday morning, listing next week's *batch* recipes |

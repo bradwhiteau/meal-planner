@@ -2,6 +2,13 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.10.0
+
+- **Eaten from frozen:** tick it on a recipe (CREAMi ice cream) and its portions stay put: the cook sheet sends them
+  all to the freezer, and there's no night-before "move to the fridge" reminder.
+- **Where Cook from frozen lives:** Recipes → **Ingredients** → tap an ingredient. It's for ingredients; recipes now have
+  their own tick (above).
+
 ## 2.9.0
 
 - **Take it out of the freezer:** the evening before a meal is cooked, Today's prep checks its ingredients. If the

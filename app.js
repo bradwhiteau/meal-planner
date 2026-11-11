@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.9.0';
+  const APP_VERSION = '2.10.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -643,7 +643,8 @@
     return Math.max(0, n - inFridge);
   }
   function openCook(date, k, id, recipe, made, eatNow) {
-    const rest = Math.max(0, made - eatNow), toFridge = Math.min(rest, servingsSoon(recipe.id, date, k, id)), alloc = {};
+    // Portions for the next few days go to the fridge, the rest to the freezer; a recipe eaten frozen all goes in the freezer.
+    const rest = Math.max(0, made - eatNow), toFridge = recipe.eatFrozen ? 0 : Math.min(rest, servingsSoon(recipe.id, date, k, id)), alloc = {};
     coldLocations().forEach(l => { alloc[l] = 0; });
     alloc[fridgeLoc()] = (alloc[fridgeLoc()] || 0) + toFridge;
     alloc[freezerLoc()] = (alloc[freezerLoc()] || 0) + rest - toFridge;
@@ -666,10 +667,11 @@
       const r = resolveItem(plan, i, k, x), key = itemKey(tmr, k, x.id);
       if (k === 'breakfast' && r.kind === 'recipe' && r.recipe.tags.includes('rice cooker'))
         out.push({ key: 'rice', text: `Load the rice cooker for ${r.label} and set the timer` });
-      // Meals eaten from cooked portions: count what tomorrow needs from the fridge.
-      if (r.recipe && !done.has(key) && (r.kind === 'leftover' || x.cooked || !(alloc.slotCook[key] > 0)))
-        want.set(r.recipe.id, (want.get(r.recipe.id) || 0) + r.servings);
-      else if (r.kind === 'leftover' && r.freezer)
+      // Meals eaten from cooked portions: count what tomorrow needs from the fridge (not ones eaten frozen: ice cream).
+      if (r.recipe && !done.has(key) && (r.kind === 'leftover' || x.cooked || !(alloc.slotCook[key] > 0))) {
+        if (!r.recipe.eatFrozen) want.set(r.recipe.id, (want.get(r.recipe.id) || 0) + r.servings);
+      }
+      else if (r.kind === 'leftover' && r.freezer && !(r.recipe && r.recipe.eatFrozen))
         out.push({ key: `freezer-${k}-${x.id}`, text: `Move tomorrow's ${k} (${r.label}) from the freezer to the fridge` });
       else if (r.kind === 'recipe' && !done.has(key)) {
         // A cook tomorrow: its "Night before" note, and the ingredients it takes (for the thaw check below).
@@ -860,6 +862,7 @@
       r.servings = Number(r.servings) > 0 ? Number(r.servings) : 1;
       r.method = isStr(r.method) ? r.method : '';
       if (!isStr(r.nightBefore) || !r.nightBefore.trim()) delete r.nightBefore;
+      if (r.eatFrozen !== true) delete r.eatFrozen;
       return true;
     },
     weekPlans: r => {
@@ -2072,6 +2075,7 @@
         ${field('Method', `<textarea rows="4" data-m="draft.method">${esc(d.method)}</textarea>`)}
         ${field('Night before (optional)', `<input type="text" data-m="draft.nightBefore" value="${esc(d.nightBefore || '')}" placeholder="e.g. Cook the rice">`)}
         <p class="muted">Shows in the evening prep the day before this recipe is cooked. Frozen ingredients get their own "take it out" reminder.</p>
+        <label class="toggle"><input type="checkbox" data-m="draft.eatFrozen" ${d.eatFrozen ? 'checked' : ''}> Eaten from frozen (portions stay in the freezer, no move-to-fridge reminder)</label>
         <div class="row"><button class="btn primary" data-action="save-recipe">Save</button>
           ${m.id ? `<button class="btn danger" data-action="delete-recipe">Delete</button>` : ''}${cancelBtn()}</div>`;
     },
@@ -2598,6 +2602,7 @@
       Object.assign(r, { name: d.name.trim(), servings: Number(d.servings) || 1, proteinPerServingG: d.proteinPerServingG, lactose: d.lactose, tags: d.tags, method: d.method || '', ingredients });
       const nb = String(d.nightBefore || '').trim();
       if (nb) r.nightBefore = nb; else delete r.nightBefore;
+      if (d.eatFrozen) r.eatFrozen = true; else delete r.eatFrozen;
       put('recipes', r); closeModal();
       if (created) toast(`${created} new ingredient${created > 1 ? 's' : ''}: set the store in Ingredients`);
     },
