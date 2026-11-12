@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.10.0';
+  const APP_VERSION = '2.11.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -2017,7 +2017,7 @@
           ${field('Cooked on', `<input type="date" data-m="draft.cookedOn" value="${esc(d.cookedOn || '')}">`)}</div>
         <div class="row">${field('Location', locationSelect('draft.location', d.location || ''))}</div>
         <div class="row"><button class="btn primary" data-action="save-portion">Save</button>
-          ${m.id ? `<button class="btn danger" data-action="delete-portion">Remove</button>` : ''}${cancelBtn()}</div>`;
+          ${m.id ? `<button class="btn" data-action="move-open" data-id="${m.id}">Move</button><button class="btn danger" data-action="delete-portion">Remove</button>` : ''}${cancelBtn()}</div>`;
     },
     mealMenu(m) {
       const { plan, i } = locateDay(ui.date), sl = findItem(plan.days[i], m.slot, m.item), r = resolveItem(plan, i, m.slot, sl);
@@ -2138,7 +2138,26 @@
           ${field('Unit', unitSelect('draft.keepUnit', m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || ''), d.keepUnit || d.unit))}</div>
         <p class="muted">Keep at least: counted across every location. When what's left after the week's meals would drop below it, the shopping list tops it up.</p>
         <div class="row"><button class="btn primary" data-action="save-pantry">Save</button>
-          ${m.id ? `<button class="btn danger" data-action="delete-pantry">Remove from larder</button>` : ''}${cancelBtn()}</div>`;
+          ${m.id ? `<button class="btn" data-action="move-open" data-id="${m.id}">Move</button>` : ''}${cancelBtn()}</div>
+        ${m.id ? `<div class="row"><button class="btn danger" data-action="delete-pantry">Remove from larder</button></div>` : ''}`;
+    },
+    // Moving some (or all) of a Larder row to another location: how many, then tap where it goes.
+    move(m) {
+      const x = byId('pantryItems', m.id);
+      if (!x) return `<h2>Not in the larder any more</h2><div class="row">${cancelBtn('Close')}</div>`;
+      const name = isPortion(x) ? (byId('recipes', x.recipeId) || {}).name || 'Prepared meal' : ingName(x.ingredientId);
+      const unit = isPortion(x) ? (Number(x.qty) === 1 ? 'portion' : 'portions') : x.unit, from = locOf(x);
+      const to = settings.locations.filter(l => l !== from);
+      return `<h2>Move ${esc(name)}</h2>
+        <p class="muted">${esc(fmtQty(Number(x.qty), unit))} in ${esc(from || 'no location')}</p>
+        <div class="cook-row"><span>How many</span><span class="stepper">
+          <button data-action="move-step" data-d="-1" aria-label="Less">−</button>
+          <input class="qty" type="number" inputmode="decimal" min="0" data-m="n" data-type="num" value="${esc(m.n)}">
+          <button data-action="move-step" data-d="1" aria-label="More">+</button></span></div>
+        <div class="row"><button class="btn small ghost" data-action="move-all">All ${esc(fmtQty(Number(x.qty), unit))}</button></div>
+        <p class="muted">Move to:</p>
+        <div class="grid2">${to.map(l => `<button class="btn" data-action="move-to" data-loc="${esc(l)}">${esc(l)}</button>`).join('')}</div>
+        <div class="row">${cancelBtn()}</div>`;
     },
     eggs() {
       return `<h2>Eggs collected</h2><div class="grid4">${[1, 2, 3, 4, 5, 6, 8, 12].map(n => `<button class="btn" data-action="add-eggs" data-n="${n}">${n}</button>`).join('')}</div>${cancelBtn()}`;
@@ -2564,6 +2583,32 @@
       closeModal();
     },
     'delete-pantry'() { remove('pantryItems', ui.modal.id); closeModal(); },
+    'move-open'(el) {
+      const x = byId('pantryItems', el.dataset.id), have = Number(x.qty) || 0;
+      openModal({ type: 'move', id: x.id, n: have >= 1 ? 1 : have });
+    },
+    'move-step'(el) {
+      const m = ui.modal, x = byId('pantryItems', m.id);
+      m.n = Math.min(Number(x.qty) || 0, Math.max(0, round((Number(m.n) || 0) + Number(el.dataset.d), 3)));
+      renderModal();
+    },
+    'move-all'() { ui.modal.n = Number(byId('pantryItems', ui.modal.id).qty) || 0; renderModal(); },
+    'move-to'(el) {
+      const m = ui.modal, x = byId('pantryItems', m.id), to = el.dataset.loc, have = Number(x.qty) || 0;
+      const n = Math.min(have, Number(m.n) || 0);
+      if (!(n > 0)) return toast('How many?');
+      if (isPortion(x)) {
+        // Portions keep their cook date, so the fridge's eat-or-freeze warning still counts from the cook.
+        shrinkPortionRow(x, n); addPortions(x.recipeId, n, to, x.cookedOn || '');
+      } else {
+        // Joins the row already there, if any. A row moved in full goes, rather than staying as "run out".
+        const unit = x.unit;
+        if (n >= have) remove('pantryItems', x.id); else { x.qty = round(have - n, 3); put('pantryItems', x); }
+        pantryAdd(x.ingredientId, n, unit, to);
+      }
+      closeModal();
+      toast(`Moved ${fmtQty(n, isPortion(x) ? (n === 1 ? 'portion' : 'portions') : x.unit)} to ${to}`);
+    },
     baked() { const ing = homeIngredient('sourdough', 'Sourdough', 'loaf'); pantryAdd(ing.id, 1, 'loaf'); toast('+1 sourdough loaf'); render(); },
     eggs() { openModal({ type: 'eggs' }); },
     'add-eggs'(el) { const ing = homeIngredient('eggs', 'Eggs', 'each'); pantryAdd(ing.id, Number(el.dataset.n), 'each'); toast(`+${el.dataset.n} eggs`); closeModal(); },

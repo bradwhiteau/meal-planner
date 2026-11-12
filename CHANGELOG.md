@@ -2,6 +2,13 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.11.0
+
+- **Move in the Larder:** tap an item or prepared meal, then **Move**: choose how many (− / +, or All) and tap the
+  location it's going to. It's taken from where it was and added to the row already at the new spot (or a new row).
+  Moving all of it removes the old row. Prepared meals keep their cook date, so the eat-or-freeze warning still counts
+  from the cook.
+
 ## 2.10.0
 
 - **Eaten from frozen:** tick it on a recipe (CREAMi ice cream) and its portions stay put: the cook sheet sends them

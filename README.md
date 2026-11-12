@@ -45,6 +45,8 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
   **One list for the next shop:** generating a list for this week or a later one covers every meal still to come up to the
   end of that week, plus "Keep at least" top-ups. Anything unbought on earlier weeks' lists moves onto it (hand-added items
   show "carried over"), so generate whenever you're about to shop and use the one list. The Shop tab opens on it.
+- **Moving things in the Larder:** tap an item (or a 🍲 prepared meal), then **Move**. Pick how many with − / + (or **All**),
+  then tap where it's going. It joins what's already there; prepared meals keep their cook date.
 - **Larder tab:** **+ Add to larder**, **🍲 + Prepared meal**, **Baked sourdough** and **Collected eggs** sit at the top. Below, each location (Fridge, Freezer, Pantry Shelf 1…; edit the list in Settings) folds open and closed, showing its 🍲 meals and item count, with ⚠ if something inside needs eating or freezing. **Search the larder** (under the buttons) shows only
   the items whose name matches, and only the locations that have one. It works by itself:
   ticking a bought item on the Shop tab adds it, and tapping **Eaten** on a meal you cooked takes that recipe's ingredients out

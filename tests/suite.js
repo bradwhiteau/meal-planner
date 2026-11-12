@@ -808,6 +808,28 @@
     await c.set('#modal [data-m="draft.location"]', 'Pantry Ground');
     await c.click('[data-action="save-pantry"]', 150);
     t.eq('Moving the fridge row onto Pantry Ground merges them', await c.larder(), ['pepsi:35each@Pantry Ground']);
+    // Move: 6 of the 35 cans into the fridge, without retyping the item.
+    const moveFrom = async (loc, n, to) => {
+      await c.tab('pantry');
+      await c.click(c.loc(loc).querySelector('[data-action="edit-pantry"]'));
+      await c.click('#modal [data-action="move-open"]', 60);
+      if (n === 'all') await c.click('#modal [data-action="move-all"]', 40); else await c.set('#modal [data-m="n"]', String(n));
+      await c.click(`#modal [data-action="move-to"][data-loc="${to}"]`, 150);
+    };
+    await moveFrom('Pantry Ground', 6, 'Fridge');
+    t.eq('Move 6 to the Fridge: 29 left on Pantry Ground, 6 in the Fridge', await c.larder(), ['pepsi:29each@Pantry Ground', 'pepsi:6each@Fridge']);
+    await moveFrom('Pantry Ground', 6, 'Fridge');
+    t.eq('Moving 6 more joins the Fridge row (12)', await c.larder(), ['pepsi:12each@Fridge', 'pepsi:23each@Pantry Ground']);
+    await moveFrom('Fridge', 'all', 'Pantry Ground');
+    t.eq('Moving all of it back leaves no empty Fridge row', await c.larder(), ['pepsi:35each@Pantry Ground']);
+    // Prepared meals move the same way and keep their cook date.
+    await c.importJson(patch({ pantryItems: [mk('pp', { recipeId: 'can', qty: 3, unit: 'portion', location: 'Freezer', cookedOn: day(0) })] }));
+    await c.tab('pantry');
+    await c.click(c.loc('Freezer').querySelector('[data-action="edit-portion"]'));
+    await c.click('#modal [data-action="move-open"]', 60);
+    await c.click('#modal [data-action="move-to"][data-loc="Fridge"]', 150);
+    const meals = (await c.all('pantryItems')).filter(x => x.recipeId === 'can').map(x => `${x.qty}@${x.location}:${x.cookedOn === day(0)}`).sort();
+    t.eq('A prepared meal moves 1 to the Fridge, keeping its cook date', meals, ['1@Fridge:true', '2@Freezer:true']);
     await c.click('[data-action="add-pantry"]');
     await c.set('#modal [data-m="draft.name"]', 'Pepsi Max (375 mL can)'); await sleep(60);
     const unitEl = c.$('#modal [data-m="draft.unit"]');
