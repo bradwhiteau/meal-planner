@@ -840,6 +840,17 @@
     await c.click(c.loc('Fridge').querySelector('[data-action="edit-pantry"][data-id="odd"]'));
     t.eq('An odd unit already set is kept but labelled', [...c.$('#modal [data-m="draft.unit"]').options].map(o => o.textContent), ['each', "cans (doesn't match recipes)"]);
     await c.click('[data-action="close-modal"]');
+    // Rename from the Larder (2.12.0): Edit ingredient renames the same ingredient, no duplicate.
+    const before = (await c.all('ingredients')).length;
+    await c.tab('pantry');
+    await c.click(c.loc('Fridge').querySelector('[data-action="edit-pantry"][data-id="odd"]'));
+    await c.click('#modal [data-action="edit-ingredient"]', 60);
+    await c.set('#modal [data-m="draft.name"]', 'Pepsi Max can');
+    await c.click('#modal [data-action="save-ingredient"]', 150);
+    const ings = await c.all('ingredients');
+    t.eq('Edit ingredient from a Larder row renames it in place', [ings.length, (ings.find(i => i.id === 'pepsi') || {}).name], [before, 'Pepsi Max can']);
+    t.ok('The Larder shows the new name', c.loc('Fridge').innerText.includes('Pepsi Max can'), c.loc('Fridge').innerText);
+    t.ok('…and the recipe uses it', (await c.all('recipes')).find(r => r.id === 'can').ingredients[0].ingredientId === 'pepsi');
   });
 
   scenario('Store folds: each store opens and shuts, remembered (2.8.0)', async (c, t) => {

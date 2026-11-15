@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.11.0';
+  const APP_VERSION = '2.12.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -2139,7 +2139,9 @@
         <p class="muted">Keep at least: counted across every location. When what's left after the week's meals would drop below it, the shopping list tops it up.</p>
         <div class="row"><button class="btn primary" data-action="save-pantry">Save</button>
           ${m.id ? `<button class="btn" data-action="move-open" data-id="${m.id}">Move</button>` : ''}${cancelBtn()}</div>
-        ${m.id ? `<div class="row"><button class="btn danger" data-action="delete-pantry">Remove from larder</button></div>` : ''}`;
+        ${m.id ? `<div class="row"><button class="btn" data-action="edit-ingredient" data-id="${esc(d.ingredientId)}">Edit ingredient</button>
+          <button class="btn danger" data-action="delete-pantry">Remove from larder</button></div>
+        <p class="muted">Edit ingredient: rename it, or change its store, aisle or pack size. Recipes and the shopping list follow.</p>` : ''}`;
     },
     // Moving some (or all) of a Larder row to another location: how many, then tap where it goes.
     move(m) {

@@ -2,6 +2,12 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.12.0
+
+- **Edit ingredient from the Larder:** tap an item, then **Edit ingredient** to rename it (or change its store, aisle or
+  pack size) without going via Recipes → Ingredients. It's the same ingredient, so recipes, the shopping list and the
+  Larder all show the new name. (Typing a new name into a recipe's ingredient row still swaps in a different ingredient.)
+
 ## 2.11.0
 
 - **Move in the Larder:** tap an item or prepared meal, then **Move**: choose how many (− / +, or All) and tap the
