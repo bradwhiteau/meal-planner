@@ -70,7 +70,7 @@ or gets a new one; an old-style single object instead of a list is read as a lis
 
 | Item | Meaning |
 |---|---|
-| `{"id": "…", "recipeId": "…", "servings": 1, "cook": 4}` | Eat `servings` of a recipe; cook `cook` servings. `null` = cook what the plan eats: this item plus the leftover items pointing at it (batch recipes cook at least the whole recipe). The shopping list buys for the servings cooked, less what Larder portions cover. |
+| `{"id": "…", "recipeId": "…", "servings": 1, "cook": 4}` | Eat `servings` of a recipe; cook `cook` servings. `null` = cook what the plan eats: this item, the leftover items pointing at it, and (for lunches and dinners, since 2.13.0) the same recipe's lunches and dinners in the next 3 days, across weeks, unless the Larder already covers them (batch recipes look as far as the plan goes and cook at least the whole recipe; breakfasts, snacks, shakes and *rice cooker* recipes cook each time). A typed `cook` is never pulled into an earlier cook. The shopping list buys for the servings cooked, less what Larder portions cover. |
 | `{"id": "…", "leftoverOf": {"day": 0, "slot": "dinner", "item": "…"}, "servings": 1, "freezer": false}` | Leftovers of an earlier item in the same week. `day` 0 = Monday … 6 = Sunday; `item` is that item's `id` (left out = the first item of that meal). `freezer: true` adds a night-before "move it to the fridge" reminder. |
 | `{"id": "…", "text": "Eating out", "proteinG": 40}` | Free text with an optional protein estimate. |
 

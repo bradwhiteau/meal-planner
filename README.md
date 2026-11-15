@@ -59,7 +59,12 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
   went (it suggests the fridge for the next 3 days' meals, the rest to the freezer); the ingredients come out of the larder and
   the portions go in, marked 🍲 in their fridge or freezer. Leftovers and later meals of that recipe then just say **Eaten** and take a portion,
   fridge first. Under them it says where the portions are ("1 in the Fridge, 4 in the Freezer"), or **none in the larder** in orange
-  if the cook was skipped or they've been eaten. Cooked ahead (Sunday batch)? Use **⋯ → Cooked, eating later**. Undo puts everything back.
+  if the cook was skipped or they've been eaten. Cooked ahead? Use **⋯ → Cooked, eating later**. Undo puts everything back.
+- **Cook once, eat twice:** a lunch or dinner that cooks also cooks for the same recipe's lunches and dinners in the next
+  3 days (batch recipes: as far as the plan goes), across weeks too, so Sunday's tuna mornay cooks 2 when Monday lunch is
+  tuna mornay as well. Those later meals read "leftovers from Sun dinner". Change **Portions made** on the cook sheet if you
+  made fewer, and the next one cooks its own. Breakfasts, snacks, shakes and rice-cooker recipes cook each time.
+- **Spread the cooking:** the Week tab shows each day's cooks (🍳) and flags a day with more than one in orange.
 - **How much to put in:** tap a meal's name on Today to open its recipe. Each ingredient shows for **1 serve**; a meal you're
   cooking adds a **Cooking 6** column with the amounts for the whole cook, and says what they're for (this meal, leftovers,
   spare for the larder).
@@ -121,7 +126,7 @@ Changes are made on the phone only. Only one device, the phone, should be the **
 | Move the freezer portion to the fridge | Evening before a leftovers slot marked *from the freezer* (set automatically for batch recipes 3+ days later). Not for recipes ticked *Eaten from frozen* (ice cream) |
 | Take a frozen ingredient out to thaw | Evening before a meal that cooks with it, when the fridge and pantry don't hold enough but a freezer does (**Move to fridge** moves it in the Larder). Not for ingredients ticked *Cook from frozen* |
 | The recipe's *Night before* note (e.g. "Cook the rice") | Evening before that recipe is cooked |
-| Sunday batch cook | Sunday morning, listing next week's *batch* recipes |
+| Sunday planning | Sunday morning: plan next week and generate the shopping list |
 
 Times are set in Settings. Android can't wake a closed web app at a set time, so notifications only fire while the app is open or in the background.
 The reminders always show on the **Today** screen. For alerts you can rely on, tap **Settings → Add the next 7 days to my calendar** each Sunday and open the file with Google Calendar.

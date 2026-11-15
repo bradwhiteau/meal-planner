@@ -2,6 +2,22 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.13.0
+
+- **Cook once, eat twice:** a lunch or dinner that needs cooking now also cooks for the same recipe's lunches and dinners
+  in the next few days, even when they fall in next week's plan. Tuna mornay for Sunday dinner and Monday lunch cooks 2 on
+  Sunday ("cook 2 · 1 for leftovers (Mon lunch)"), and Monday's lunch reads "leftovers from Sun dinner". No need to set
+  up Leftovers by hand. Ordinary recipes look 3 days ahead (as long as cooked food keeps in the fridge); batch recipes
+  freeze, so they look as far as the plan goes. Breakfasts, snacks, shakes and rice-cooker recipes still cook each time.
+  A typed **Servings to cook** cooks exactly that, and is never pulled into an earlier cook.
+- **Cook what you actually made:** on the cook sheet, change **Portions made** and the fridge/freezer split follows. Made
+  fewer than suggested? The next meal of that recipe becomes a cook of its own, so it's never left short.
+- **Spread the cooking:** each day on the Week tab shows what gets cooked (🍳 Tuna mornay ×2), and turns orange with
+  "2 cooks this day" when there's more than one, so you can move a meal to a quieter day. Shakes, quick and rice-cooker
+  recipes and Costco ready-meals don't count.
+- **No more Sunday batch cook:** the Sunday reminder is now just "plan next week and generate the shopping list";
+  Settings calls it **Sunday planning**.
+
 ## 2.12.0
 
 - **Edit ingredient from the Larder:** tap an item, then **Edit ingredient** to rename it (or change its store, aisle or

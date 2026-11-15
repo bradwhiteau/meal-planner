@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.12.0';
+  const APP_VERSION = '2.13.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -237,7 +237,7 @@
   // Later items in the same week eating leftovers of this one.
   function leftoverSlots(plan, dayIdx, key, id) {
     return planItems(plan).filter(({ x }) => id && x.leftoverOf && x.leftoverOf.day === dayIdx && x.leftoverOf.slot === key && x.leftoverOf.item === id)
-      .map(({ i, k, x }) => ({ day: i, slot: k, servings: x.servings || 1 }));
+      .map(({ i, k, x }) => ({ day: i, slot: k, id: x.id, servings: x.servings || 1 }));
   }
   // What a cook item makes when "Servings to cook" is left blank: this meal plus its leftovers in the plan.
   // Batch recipes cook at least the whole recipe (the spare goes to the freezer).
@@ -245,20 +245,32 @@
     const planned = servings + leftoverSlots(plan, dayIdx, key, id).reduce((t, x) => t + x.servings, 0);
     return (recipe.tags || []).includes('batch') ? Math.max(planned, recipe.servings || 1) : planned;
   }
-  // The note under a meal that cooks more than it eats: where the rest goes.
-  function cookNote(r, amt) {
+  // The note under a meal that cooks more than it eats: where the rest goes. `lefts` = the later meals the cook covers
+  // (its Leftovers and the same recipe's meals coming up, from weekAlloc's slotFor); without it, just its Leftovers.
+  const mealAt = x => `${WEEKDAY[x.date ? dayIdx(x.date) : x.day]} ${x.slot}`;
+  function cookNote(r, amt, lefts) {
     if (!r || r.kind !== 'recipe' || !(amt > r.servings)) return '';
-    const extra = round(amt - r.servings, 2), lefts = r.leftovers || [];
+    lefts = lefts || r.leftovers || [];
+    const extra = round(amt - r.servings, 2);
     const want = lefts.reduce((t, x) => t + x.servings, 0), forLeft = Math.min(extra, want), spare = round(extra - forLeft, 2);
     const parts = [`cook ${amt}`];
-    if (forLeft > 0) parts.push(`${forLeft} for leftovers${forLeft === want ? ' (' + lefts.map(x => `${WEEKDAY[x.day]} ${x.slot}`).join(', ') + ')' : ''}`);
+    if (forLeft > 0) parts.push(`${forLeft} for leftovers${forLeft === want ? ' (' + lefts.map(mealAt).join(', ') + ')' : ''}`);
     if (spare > 0) parts.push(`${spare} spare for the larder`);
     return parts.join(' · ');
   }
 
+  // What a meal being edited would cook with "Servings to cook" left blank (0 when earlier cooks or the Larder cover it).
+  function autoCook(m, r) {
+    const plan = viewPlan(ui.week), day = plan.days[m.day], sl = m.item && findItem(day, m.slot, m.item);
+    if (sl && sl.recipeId === r.id && !(Number(sl.cook) > 0) && day.date) {
+      const amt = weekAlloc(ui.week).slotCook[itemKey(day.date, m.slot, sl.id)];
+      if (amt != null) return amt;
+    }
+    return plannedCook(plan, m.day, m.slot, m.item, r, Number(m.servings) || 1);
+  }
   // Why a cook makes this many, for the recipe sheet: "this meal + 2 leftovers (Wed dinner, Fri dinner) + 1 spare".
-  function cookWhy(r, amt) {
-    const note = cookNote(r, amt);
+  function cookWhy(r, amt, lefts) {
+    const note = cookNote(r, amt, lefts);
     return note ? 'this meal · ' + note.split(' · ').slice(1).join(' · ') : '';
   }
 
@@ -315,50 +327,81 @@
   // minus what's in the larder now. Meals already logged are skipped: their ingredients have left the larder
   // (or, if swapped or skipped, they were never cooked).
   const loggedItems = () => new Set(S.mealLogs.filter(l => !l.extra && l.item).map(l => itemKey(l.date, l.slot, l.item)));
-  // How a week's meals are covered. Per recipe: servings still to eat, portions already in the Larder, and how
-  // much each uncooked cook slot should cook. Batch recipes (tag "batch") cook the full batch whenever anything is
-  // uncovered, and the spare goes to the freezer; other recipes cook only what the Larder doesn't cover.
-  // Servings still to eat per recipe in a week (meals not yet logged), with its uncooked cook slots.
-  function weekMeals(week) {
-    const plan = planFor(week), done = loggedItems(), byRecipe = new Map();
-    planItems(plan).forEach(({ d: day, i, k, x }) => {
-      const r = resolveItem(plan, i, k, x), key = itemKey(day.date, k, x.id);
-      if (!r.recipe || !day.date || done.has(key)) return;
-      const m = byRecipe.get(r.recipe.id) || { recipe: r.recipe, needed: 0, cookSlots: [] };
-      if (r.kind === 'recipe' && !x.cooked) m.cookSlots.push({ key, cook: r.cook, fixed: r.cookFixed });
+  // ---------- who cooks what ----------
+  // Cooked food keeps this many days in the fridge (the same age the Larder flags "eat or freeze").
+  const FRIDGE_DAYS = 3;
+  // Cook once, eat over the next few days: a lunch or dinner that cooks also cooks for the same recipe's lunches and
+  // dinners coming up, across weeks too (tuna mornay Sunday dinner and Monday lunch cooks 2 on Sunday). Ordinary recipes
+  // look as far ahead as the fridge keeps them; batch recipes freeze, so they look as far as the plan goes. Breakfasts,
+  // snacks, shakes and rice-cooker recipes cook each time. A typed "Servings to cook" is never pulled into another cook.
+  const cookOnceOK = (k, recipe) => (k === 'lunch' || k === 'dinner') && !recipe.isShake && !(recipe.tags || []).includes('rice cooker');
+  const dayIdx = date => (parseYmd(date).getDay() + 6) % 7;
+  // One pass over every meal still to eat, oldest first, carrying each recipe's portions on hand (the Larder now,
+  // then what each cook leaves). A meal the portions cover cooks nothing; one they don't becomes a cook for itself,
+  // its Leftovers, and the same recipe's meals coming up (above). Returns, per item key: slotCook (what it cooks),
+  // slotFor (the later meals that cook covers) and slotFrom (the cook a later meal eats from); and per week and
+  // recipe: needed, covered (portions on hand when the week reaches it), cook and spare.
+  function allocPass(weeks) {
+    const done = loggedItems(), pot = new Map(), out = { weeks: new Map(), slotCook: {}, slotFor: {}, slotFrom: {}, slotHave: {} };
+    S.pantryItems.filter(x => isPortion(x) && Number(x.qty) > 0).forEach(x => pot.set(x.recipeId, (pot.get(x.recipeId) || 0) + Number(x.qty)));
+    const items = [];
+    for (const w of weeks) {
+      out.weeks.set(w, new Map());
+      const plan = planFor(w);
+      planItems(plan).forEach(({ d, i, k, x }) => {
+        const r = resolveItem(plan, i, k, x), key = d.date && itemKey(d.date, k, x.id);
+        if (r.recipe && d.date && !done.has(key)) items.push({ w, date: d.date, k, x, r, key });
+      });
+    }
+    const fixedCook = it => Number(it.x.cook) > 0;
+    items.forEach((it, n) => {
+      const { r, x, key } = it, rid = r.recipe.id, byRecipe = out.weeks.get(it.w);
+      const m = byRecipe.get(rid) || { recipe: r.recipe, needed: 0, start: pot.get(rid) || 0, cook: 0 };
+      byRecipe.set(rid, m);
       m.needed += r.servings;
-      byRecipe.set(r.recipe.id, m);
-    });
-    return byRecipe;
-  }
-  // Portions free for a week's meals: those in the Larder now, plus the spares earlier weeks (from this week on)
-  // still plan to cook, minus what those weeks eat. One forward pass, carrying the count week to week.
-  // A slot already marked cooked has no cook slot (its portions are in the Larder), so nothing is counted twice.
-  function portionsFreeFor(week) {
-    const free = new Map();
-    S.pantryItems.filter(x => isPortion(x) && Number(x.qty) > 0).forEach(x => free.set(x.recipeId, (free.get(x.recipeId) || 0) + Number(x.qty)));
-    for (let w = mondayOf(ui.today); w < week; w = addDays(w, 7)) {
-      allocWeek(w, free).byRecipe.forEach((m, rid) => free.set(rid, Math.max(0, round((free.get(rid) || 0) + m.cook - m.needed, 2))));
-    }
-    return free;
-  }
-  // How a week's meals are covered: per recipe, portions in the Larder cover meals first; batch recipes (tag
-  // "batch") then cook the full batch whenever anything is uncovered, and the spare goes to the freezer; other
-  // recipes cook only what the Larder doesn't cover.
-  function weekAlloc(week) { return allocWeek(week, portionsFreeFor(week)); }
-  function allocWeek(week, free) {
-    const byRecipe = weekMeals(week), slotCook = {};
-    for (const m of byRecipe.values()) {
-      m.covered = Math.min(free.get(m.recipe.id) || 0, m.needed);
-      let left = m.needed - m.covered;
-      m.cook = 0;
-      for (const c of m.cookSlots) {
-        const amt = left <= 0 ? 0 : c.fixed || !m.covered ? c.cook : Math.min(c.cook, left);
-        slotCook[c.key] = amt; m.cook += amt; left -= amt;
+      // A cook is due when the portions on hand can't cover this meal and its Leftovers.
+      const have = pot.get(rid) || 0;
+      const lefts = r.kind === 'recipe' ? r.leftovers.map(l => ({ date: addDays(it.w, l.day), slot: l.slot, servings: l.servings })) : [];
+      const need = r.servings + lefts.reduce((t, l) => t + l.servings, 0);
+      let amt = 0;
+      if (r.kind === 'recipe' && !x.cooked && have < need - 0.001) {
+        const ahead = [];
+        if (!fixedCook(it) && cookOnceOK(it.k, r.recipe)) {
+          const batch = r.recipe.tags.includes('batch'), until = addDays(it.date, FRIDGE_DAYS);
+          for (const y of items.slice(n + 1)) {
+            if (y.r.kind !== 'recipe' || !y.r.recipe || y.r.recipe.id !== rid || y.x.cooked) continue;
+            if (fixedCook(y) || (!batch && y.date >= until)) break;
+            if (!cookOnceOK(y.k, y.r.recipe)) continue;
+            ahead.push(y);
+          }
+        }
+        if (fixedCook(it)) amt = Number(x.cook);
+        else {
+          amt = round(need - have + ahead.reduce((t, y) => t + y.r.servings, 0), 2);
+          if (r.recipe.tags.includes('batch')) amt = Math.max(amt, r.recipe.servings || 1);
+        }
+        ahead.forEach(y => { out.slotFrom[y.key] = { date: it.date, slot: it.k }; });
+        out.slotHave[key] = have;
+        out.slotFor[key] = [...lefts, ...ahead.map(y => ({ date: y.date, slot: y.k, servings: y.r.servings }))];
       }
-      m.spare = round(m.covered + m.cook - m.needed, 2);
-    }
-    return { byRecipe, slotCook };
+      pot.set(rid, round(Math.max(0, have + amt - r.servings), 2));
+      if (r.kind === 'recipe' && !x.cooked) out.slotCook[key] = amt;
+      m.cook += amt;
+    });
+    out.weeks.forEach(byRecipe => byRecipe.forEach(m => {
+      m.covered = Math.min(m.start, m.needed);
+      m.spare = round(Math.max(0, m.covered + m.cook - m.needed), 2);
+    }));
+    return out;
+  }
+  // How a week's meals are covered. From this week on, the pass runs from this week to the last planned week, so
+  // spares and cook-once meals carry across weeks; an earlier week is worked out on its own against today's Larder.
+  function weekAlloc(week) {
+    const start = mondayOf(ui.today);
+    const weeks = week < start ? [week]
+      : [...new Set([week, ...S.weekPlans.filter(p => p.weekStart && p.weekStart >= start).map(p => p.weekStart)])].sort();
+    const a = allocPass(weeks);
+    return { byRecipe: a.weeks.get(week) || new Map(), slotCook: a.slotCook, slotFor: a.slotFor, slotFrom: a.slotFrom, slotHave: a.slotHave };
   }
   // What a list for `week` has to buy: the meals of every week from `from` (default: just this one) to `week`,
   // plus "Keep at least" top-ups, less what's in the Larder now (counted once across all of them).
@@ -726,15 +769,11 @@
     if (moved > 0) pantryAdd(ingredientId, round(moved, 3), norm(1, unit).unit, fridgeLoc());
     return round(moved, 3);
   }
+  // Sunday morning: plan next week and generate the list. (Cooking happens on the day of each meal, cook once eat twice,
+  // so there's no Sunday batch cook any more.)
   function batchCookTask(date) {
     if (parseYmd(date).getDay() !== 0) return null;
-    const plan = planFor(addDays(date, 1));
-    const names = [];
-    planItems(plan).forEach(({ x }) => {
-      const r = x.recipeId && byId('recipes', x.recipeId);
-      if (r && r.tags.includes('batch') && !names.includes(r.name)) names.push(r.name);
-    });
-    return { key: 'batch', text: names.length ? `Batch cook for the week: ${names.join(', ')}` : 'Sunday batch cook: plan next week, generate the list and cook the batch meals' };
+    return { key: 'batch', text: 'Sunday: plan next week and generate the shopping list' };
   }
   function remindersFor(date) {
     const list = nightBeforeTasks(date).map(t => ({ ...t, at: atTime(date, settings.reminderTimes.evening) }));
@@ -1246,7 +1285,7 @@
       const i = plan ? plan.days.findIndex(x => x.date === date) : -1;
       const logs = logsFor(date);
       if (i < 0 && !logs.length) { out.push(`<h3>${e(fmtDate(date))}${n === 0 ? ' (the day this was written)' : ''}</h3><p>Nothing planned yet.</p>`); continue; }
-      const day = i >= 0 ? plan.days[i] : { training: '', slots: {} };
+      const day = i >= 0 ? plan.days[i] : { training: '', slots: {} }, alloc = weekAlloc(mondayOf(date));
       out.push(`<h3>${e(fmtDate(date))}${n === 0 ? ' (the day this was written)' : ''}${day.training ? ` · training: ${e(TRAINING[day.training] || day.training)}` : ''}</h3><ul>`);
       for (const k of SLOTS) {
         const items = itemsOf(day, k), slotLogs = logs.filter(l => l.slot === k && !l.extra), extras = logs.filter(l => l.slot === k && l.extra);
@@ -1254,7 +1293,10 @@
         // One part per planned item, with how it went; then anything logged against an item no longer planned.
         const parts = items.map(x => {
           const r = resolveItem(plan, i, k, x), l = slotLogs.find(y => y.item === x.id);
-          let part = e(r.label) + (r.kind === 'leftover' ? ' (leftovers)' : '') + (r.recipe && r.recipe.lactose === 'contains' ? ' (contains lactose)' : '');
+          const ik = itemKey(date, k, x.id), amt = r.kind === 'recipe' && !x.cooked ? alloc.slotCook[ik] || 0 : 0;
+          const eatsCook = r.kind === 'recipe' && !x.cooked && !amt && alloc.slotFrom[ik];
+          let part = e(r.label) + (r.kind === 'leftover' || eatsCook ? ' (leftovers)' : '') + (r.recipe && r.recipe.lactose === 'contains' ? ' (contains lactose)' : '');
+          if (!l && amt > r.servings) part += ` (${e(cookNote(r, amt, alloc.slotFor[ik]))})`;
           if (r.protein != null) part += ` — ${Math.round(r.protein)} g protein`;
           if (l) part += l.skipped ? ' — skipped' : l.planned ? ' — eaten' : ` — had ${e(logLabel(l))} instead`;
           return part;
@@ -1582,7 +1624,7 @@
         const l = logOf(sl);
         if (l) { html += doneRow(l, !l.planned ? `instead of <s>${esc(r.label)}</s>` : ''); continue; }
         // "Cooked & eaten" only when cooking leaves portions to put away; a single serve just says Eaten.
-        const cookAmt = r.kind === 'recipe' && !sl.cooked ? (alloc.slotCook[itemKey(date, k, sl.id)] || 0) : 0;
+        const ik = itemKey(date, k, sl.id), cookAmt = r.kind === 'recipe' && !sl.cooked ? (alloc.slotCook[ik] || 0) : 0, from = alloc.slotFrom[ik];
         const toCook = cookAmt > 0, batchCook = toCook && cookAmt > r.servings;
         const where = r.recipe && !toCook ? portionsWhere(r.recipe.id) : '';
         let larderNote = where ? `${sl.cooked ? 'cooked · ' : ''}${where}` : (sl.cooked ? 'cooked' : ''), none = false;
@@ -1593,10 +1635,12 @@
           larderNote = waiting ? 'from the larder once cooked' : 'none in the larder';
           none = !waiting;
         }
-        const sub = [r.kind === 'leftover' ? '' : r.sub, cookNote(r, cookAmt), larderNote].filter(Boolean).join(' · ');
+        // Eaten from an earlier cook (cook once, eat twice) that hasn't happened yet.
+        else if (r.kind === 'recipe' && !toCook && !where && !sl.cooked && from) larderNote = `leftovers from ${mealAt(from)} once cooked`;
+        const sub = [r.kind === 'leftover' ? '' : r.sub, cookNote(r, cookAmt, alloc.slotFor[ik]), larderNote].filter(Boolean).join(' · ');
         // The recipe opens with each ingredient for 1 serve and, when cooking, for the whole cook.
         const nameHtml = r.recipe
-          ? `<button class="item-name link-plain" data-action="show-recipe" data-id="${r.recipe.id}" ${toCook ? `data-cook="${cookAmt}" data-why="${esc(cookWhy(r, cookAmt))}"` : ''}>${esc(r.label)}</button>`
+          ? `<button class="item-name link-plain" data-action="show-recipe" data-id="${r.recipe.id}" ${toCook ? `data-cook="${cookAmt}" data-why="${esc(cookWhy(r, cookAmt, alloc.slotFor[ik]))}"` : ''}>${esc(r.label)}</button>`
           : `<span class="item-name">${esc(r.label)}</span>`;
         html += `<div class="item"><span class="item-mark"></span>
           <div class="item-main">${nameHtml} ${r.recipe ? lactoseBadge(r.recipe) : ''}${sub ? `<div class="item-sub${none ? ' warn-text' : ''}">${esc(sub)}</div>` : ''}</div>
@@ -1667,12 +1711,13 @@
           const r = resolveItem(plan, i, k, sl);
           let sub = r.sub;
           if (r.kind === 'recipe' && d.date) {
-            const m = alloc.byRecipe.get(r.recipe.id), amt = alloc.slotCook[itemKey(d.date, k, sl.id)];
+            const ik = itemKey(d.date, k, sl.id), m = alloc.byRecipe.get(r.recipe.id), amt = alloc.slotCook[ik];
             if (sl.cooked) sub = [r.servings !== 1 ? `${r.servings} servings` : '', `cooked ${sl.cooked.made}`].filter(Boolean).join(' · ');
+            else if (amt === 0 && alloc.slotFrom[ik]) sub = `leftovers from ${mealAt(alloc.slotFrom[ik])}`;
             else if (m && amt === 0 && m.covered > 0) sub = 'from the larder';
-            else if (m && amt > 0 && m.covered > 0)
-              sub = `larder covers ${m.covered} · cooking ${amt}${m.spare > 0 ? ` leaves ${m.spare} spare` : ''}`;
-            else if (amt > r.servings) sub = [r.sub, cookNote(r, amt)].filter(Boolean).join(' · ');
+            else if (m && amt > 0 && alloc.slotHave[ik] > 0)
+              sub = `larder covers ${alloc.slotHave[ik]} · cooking ${amt}${m.spare > 0 ? ` leaves ${m.spare} spare` : ''}`;
+            else if (amt > r.servings) sub = [r.sub, cookNote(r, amt, alloc.slotFor[ik])].filter(Boolean).join(' · ');
           }
           html += `<button class="slot-item" data-action="edit-slot" data-day="${i}" data-slot="${k}" data-item="${sl.id}">
             ${r.kind === 'leftover' ? `<span class="leftover">${esc(r.label)}</span>` : esc(r.label)} ${lactoseBadge(r.recipe)}
@@ -1680,6 +1725,12 @@
         }
         html += `</span><button class="btn small ghost edit-only add-to" data-action="edit-slot" data-day="${i}" data-slot="${k}" aria-label="Add another item to ${WEEKDAY[i]} ${k}">+</button></div>`;
       }
+      // What gets cooked this day (not shakes, rice-cooker or quick things, or heating a ready-meal), so cooking can be
+      // spread across the week: two or more cooks on one day are flagged.
+      const cooks = d.date ? SLOTS.flatMap(k => itemsOf(d, k).map(sl => ({ sl, r: resolveItem(plan, i, k, sl), amt: alloc.slotCook[itemKey(d.date, k, sl.id)] || 0 })))
+        .filter(({ sl, r, amt }) => r.kind === 'recipe' && (amt > 0 || sl.cooked) && !r.recipe.isShake
+          && !r.recipe.tags.some(t => ['quick', 'rice cooker', 'Costco ready-meal'].includes(t))) : [];
+      if (cooks.length) html += `<div class="sub cook-line${cooks.length > 1 ? ' warn-text' : ''}">🍳 ${cooks.map(({ sl, r, amt }) => esc(r.label) + ` ×${sl.cooked ? sl.cooked.made : amt}`).join(', ')}${cooks.length > 1 ? ` · ${cooks.length} cooks this day` : ''}</div>`;
       if (p.total || p.unknown) html += `<div class="sub" style="text-align:right">Planned protein ${Math.round(p.total)} g${p.unknown ? ' + some not set' : ''}</div>`;
       html += `</div>`;
     });
@@ -1888,7 +1939,7 @@
         <p class="muted">${target ? `Daily target: <b>${target} g</b>` : 'Enter your bodyweight to set a daily target.'}</p></div>
       <div class="card"><h3>Reminders</h3>
         <div class="row edit-only">${field('Night-before tasks', `<input type="time" data-setting="reminderTimes.evening" value="${esc(settings.reminderTimes.evening)}">`)}
-          ${field('Sunday batch cook', `<input type="time" data-setting="reminderTimes.batchCook" value="${esc(settings.reminderTimes.batchCook)}">`)}</div>
+          ${field('Sunday planning', `<input type="time" data-setting="reminderTimes.batchCook" value="${esc(settings.reminderTimes.batchCook)}">`)}</div>
         <p class="muted">Notifications: ${nsText}</p>
         ${ns === 'default' ? `<button class="btn wide" data-action="enable-notify">Turn on notifications</button>` : ''}
         <button class="btn wide" data-action="ics">Add the next 7 days to my calendar</button>
@@ -1975,8 +2026,8 @@
         body = recipePicker(m)
           + (r ? `<p>${lactoseBadge(r)} <span class="muted">${r.proteinPerServingG != null ? r.proteinPerServingG + ' g protein per serving' : 'Protein not set yet'} · recipe makes ${r.servings}</span></p>` : '')
           + `<div class="row">${field('Servings eaten', `<input type="number" inputmode="decimal" step="0.5" min="0.5" data-m="servings" data-type="num" value="${esc(m.servings)}">`)}
-            ${field('Servings to cook', `<input type="number" inputmode="decimal" step="1" min="1" data-m="cook" data-type="num" value="${esc(m.cook == null ? '' : m.cook)}" placeholder="${r ? plannedCook(viewPlan(ui.week), m.day, m.slot, m.item, r, Number(m.servings) || 1) : ''}">`)}</div>
-            <p class="muted">Leave blank to cook this meal plus its Leftovers in later slots. Type a number to cook extra for the larder. The shopping list buys for the servings cooked.</p>`;
+            ${field('Servings to cook', `<input type="number" inputmode="decimal" step="1" min="1" data-m="cook" data-type="num" value="${esc(m.cook == null ? '' : m.cook)}" placeholder="${r ? autoCook(m, r) : ''}">`)}</div>
+            <p class="muted">Leave blank to cook this meal, its Leftovers, and this recipe's lunches and dinners in the next few days (batch recipes: as far as the plan goes). Type a number to cook exactly that. The shopping list buys for the servings cooked.</p>`;
       } else if (m.mode === 'leftover') {
         body = sources.length ? field('Leftovers from', `<select data-m="src" data-rerender><option value="">Choose…</option>${sources.map(s => `<option value="${s.v}" ${s.v === m.src ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select>`)
           + field('Servings eaten', `<input type="number" inputmode="decimal" step="0.5" min="0.5" data-m="servings" data-type="num" value="${esc(m.servings)}">`)
@@ -2299,8 +2350,19 @@
     'cook-step'(el) {
       const m = ui.modal, d = Number(el.dataset.d), key = el.dataset.key;
       if (key === 'loc') m.alloc[el.dataset.loc] = Math.max(0, (m.alloc[el.dataset.loc] || 0) + d);
-      else m[key] = Math.max(0, m[key] + d);
-      if (m.eatNow > m.made) m.eatNow = m.made;
+      else {
+        m[key] = Math.max(0, m[key] + d);
+        if (m.eatNow > m.made) m.eatNow = m.made;
+        // Keep "put away" in step with what's left over: fewer portions come off the freezer first, more go to the
+        // fridge (the freezer for a recipe eaten frozen).
+        const rest = Math.max(0, m.made - m.eatNow), r = byId('recipes', m.recipeId);
+        let diff = rest - Object.values(m.alloc).reduce((t, n) => t + n, 0);
+        if (diff > 0) { const to = r && r.eatFrozen ? freezerLoc() : fridgeLoc(); m.alloc[to] = (m.alloc[to] || 0) + diff; }
+        for (const loc of Object.keys(m.alloc).sort((a, b) => isFreezer(b) - isFreezer(a))) {
+          if (diff >= 0) break;
+          const t = Math.min(m.alloc[loc], -diff); m.alloc[loc] -= t; diff += t;
+        }
+      }
       renderModal();
     },
     'save-cook'() {

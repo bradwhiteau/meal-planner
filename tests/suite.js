@@ -443,6 +443,55 @@
     t.eq('Bought 2.35 kg: the larder holds what was actually bought', (await c.larder()).filter(x => x.startsWith('bulg')), ['bulg:2350g@']);
   });
 
+  scenario('Cook once, eat twice: a cook covers the same recipe\'s meals in the next few days, across weeks (2.13.0)', async (c, t) => {
+    // Brad's Sunday: tuna mornay for dinner and again for Monday lunch (next week's plan). The app said to cook 1.
+    await c.importJson(patch({
+      ingredients: [mk('tuna', { name: 'Tinned tuna', defaultUnit: 'tin', store: 'Supermarket', aisle: '5' }),
+        mk('oats', { name: 'Steel-cut oats', defaultUnit: 'g', store: 'Supermarket', aisle: '1' }),
+        mk('chk', { name: 'Chicken thigh', defaultUnit: 'g', store: 'Butcher', aisle: 'Meat' })],
+      recipes: [mk('morn', { name: 'Tuna mornay', servings: 1, proteinPerServingG: 59, lactose: 'contains', tags: [], method: '',
+        ingredients: [{ ingredientId: 'tuna', qty: 1, unit: 'tin' }] }),
+      mk('oat', { name: 'Oats', servings: 1, proteinPerServingG: 42, lactose: 'none', tags: ['rice cooker'], method: '', ingredients: [{ ingredientId: 'oats', qty: 80, unit: 'g' }] }),
+      mk('stew', { name: 'Chicken stew', servings: 1, proteinPerServingG: 50, lactose: 'none', tags: [], method: '', ingredients: [{ ingredientId: 'chk', qty: 200, unit: 'g' }] })],
+      weekPlans: [weekPlan('w0', 0, {
+        6: { breakfast: { recipeId: 'oat', servings: 1, cook: null }, lunch: { recipeId: 'stew', servings: 1, cook: null }, dinner: { recipeId: 'morn', servings: 1, cook: null } } }),
+      weekPlan('w1', 1, {
+        0: { breakfast: { recipeId: 'oat', servings: 1, cook: null }, lunch: { recipeId: 'morn', servings: 1, cook: null } },
+        1: { dinner: { recipeId: 'stew', servings: 1, cook: 3 } },
+        2: { dinner: { recipeId: 'stew', servings: 1, cook: null } },
+        3: { dinner: { recipeId: 'morn', servings: 1, cook: null } } })],
+    }));
+    const at = (d, k) => cookAt(c.w.__mp.alloc(day(0)).slotCook, day(d), k);
+    t.eq('Sunday dinner cooks 2: itself and Monday lunch, across the week boundary', at(6, 'dinner'), 2);
+    t.eq('Monday lunch cooks nothing', at(7, 'lunch'), 0);
+    t.eq('Thursday\'s mornay is past the fridge days: cooks its own', at(10, 'dinner'), 1);
+    t.eq('Rice-cooker oats cook each morning', [at(6, 'breakfast'), at(7, 'breakfast')], [1, 1]);
+    t.eq('A typed cook amount is never pulled into an earlier cook, and stops the look-ahead', [at(6, 'lunch'), at(8, 'dinner')], [1, 3]);
+    t.eq('…and later meals eat from it', at(9, 'dinner'), 0);
+    await c.go(day(6));
+    t.has('Sunday card says what the 2 are for', c.card('dinner').innerText, 'cook 2 · 1 for leftovers (Mon lunch)');
+    t.has('Now doc says it too', c.w.__mp.nowDoc(), 'Tuna mornay (contains lactose) (cook 2 · 1 for leftovers (Mon lunch)) — 59 g protein');
+    await c.week(day(0));
+    t.has('Week: Sunday counts two cooks', c.$$('.cook-line').map(x => x.innerText).join(' / '), '🍳 Chicken stew ×1, Tuna mornay ×2 · 2 cooks this day');
+    await c.week(day(7));
+    const rows = () => c.$$('.slot-row').map(b => b.innerText.replace(/\s*\n\s*/g, ' ')).join(' / ');
+    t.has('Week: Monday lunch eats Sunday\'s cook', rows(), 'Contains lactose leftovers from Sun dinner');
+    t.has('Week: Thursday cooks its own, with no talk of the larder', rows(), 'DINNER Tuna mornay ⚠ Contains lactose + / SNACK');
+    t.ok('Week: no cook line on Monday (oats don\'t count)', !c.$$('.card').some(x => x.innerText.includes('Mon') && x.querySelector('.cook-line')));
+    await c.shop(day(7)); await c.click('[data-action="regenerate"]', 300);
+    t.eq('List buys 3 tins: 2 on Sunday, 1 on Thursday', c.shopText('Tinned tuna').split(' | ').slice(0, 2), ['Tinned tuna', '3 tin']);
+    // Cooked only 1 after all: Monday lunch has to cook its own.
+    await c.importJson(patch({ pantryItems: [mk('t1', { ingredientId: 'tuna', qty: 3, unit: 'tin' })] }));
+    await c.go(day(6));
+    await c.click(c.card('dinner').querySelector('[data-action="eat"]'), 120);
+    t.has('Cook sheet suggests 2, eat 1', c.modalText(), 'Where did the other 1 go?');
+    await c.click('#modal [data-action="cook-step"][data-key="made"][data-d="-1"]', 60);
+    await c.click('[data-action="save-cook"]', 200);
+    t.eq('Made 1: Monday lunch cooks 1', at(7, 'lunch'), 1);
+    await c.go(day(7));
+    t.eq('…and its card says Eaten (cook), not leftovers', [c.card('lunch').querySelector('[data-action="eat"]').innerText, (c.card('lunch').querySelector('.item-sub') || { innerText: '' }).innerText], ['Eaten', '']);
+  });
+
   scenario('Bulgogi night before: take frozen ingredients out, and the recipe\'s own note (2.9.0)', async (c, t) => {
     await c.importJson(patch({
       ingredients: [mk('bulg', { name: 'Costco beef bulgogi', defaultUnit: 'g', store: 'Costco', aisle: 'Ready meals', location: 'Chest Freezer' }),
