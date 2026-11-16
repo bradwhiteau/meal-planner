@@ -2,6 +2,12 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.14.0
+
+- **Cooked something off the plan?** Larder → **+ Prepared meal** now has a **Just cooked it** tick (on by default). With
+  it ticked, the ingredients for those portions come out of the larder, just as cooking a planned meal does (2 tubs of
+  CREAMi ice cream take their oat milk). Untick it when you're only recording portions that are already in the fridge or freezer.
+
 ## 2.13.0
 
 - **Cook once, eat twice:** a lunch or dinner that needs cooking now also cooks for the same recipe's lunches and dinners

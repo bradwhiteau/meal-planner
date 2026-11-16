@@ -65,6 +65,12 @@
         el.dispatchEvent(new w.Event('change', { bubbles: true }));
         await sleep(40);
       },
+      async untick(sel) {
+        const el = await until(() => $(sel), 2500, sel);
+        el.checked = false;
+        el.dispatchEvent(new w.Event('change', { bubbles: true }));
+        await sleep(40);
+      },
       async tab(view) { await c.click(`.tabs [data-view="${view}"]`); },
       async settings() { await c.click('[data-action="menu"]', 40); await c.click('#modal [data-view="settings"]'); },
       async importJson(obj, name = 'test.json') {
@@ -326,6 +332,7 @@
     await c.tab('pantry'); await c.click('[data-action="add-portion"]');
     await c.set('#modal [data-m="draft.recipeId"]', 'bol'); await c.set('#modal [data-m="draft.qty"]', '2');
     await c.set('#modal [data-m="draft.location"]', 'Fridge'); await c.set('#modal [data-m="draft.cookedOn"]', lastThursday);
+    await c.untick('#modal [data-m="justCooked"]');
     await c.click('[data-action="save-portion"]', 150);
     t.has('A closed Fridge shows ⚠ when something needs eating or freezing', c.$$('.larder-loc').find(x => x.querySelector('.loc-name').innerText.trim() === 'Fridge').querySelector('summary').innerText, '⚠');
     await sleep(30);
@@ -568,6 +575,30 @@
     await c.importJson(patch({ recipes: [cream(false, new Date(Date.now() + 5000).toISOString())] }));
     await c.go(day(1));
     t.has('Without the tick it would move it (as for any frozen meal)', prep(), 'Move 1 × Ice cream (CREAMi) from the freezer to the fridge');
+  });
+
+  scenario('Off-plan cook: + Prepared meal takes the ingredients (2.14.0)', async (c, t) => {
+    await c.importJson(patch({
+      ingredients: [mk('oat', { name: 'Oat Milk', defaultUnit: 'ml', store: 'Supermarket', aisle: '2', location: 'Fridge' })],
+      recipes: [mk('ice', { name: 'Ice cream (CREAMi)', servings: 1, proteinPerServingG: 28, lactose: 'low', tags: [], method: '',
+        eatFrozen: true, ingredients: [{ ingredientId: 'oat', qty: 125, unit: 'ml' }] })],
+      pantryItems: [mk('p1', { ingredientId: 'oat', qty: 1000, unit: 'ml', location: 'Fridge' })],
+    }));
+    const add = async tick => {
+      await c.tab('pantry'); await c.click('[data-action="add-portion"]');
+      await c.set('#modal [data-m="draft.recipeId"]', 'ice'); await c.set('#modal [data-m="draft.qty"]', '2');
+      await c.set('#modal [data-m="draft.location"]', 'Freezer');
+      const box = c.$('#modal [data-m="justCooked"]');
+      t.ok('Just cooked it: there, and ticked to start with', !!box && box.checked);
+      if (!tick) await c.untick('#modal [data-m="justCooked"]');
+      await c.click('[data-action="save-portion"]', 150);
+    };
+    await add(true);
+    t.eq('Ticked: 2 portions in, 250 ml oat milk out', await c.larder(), ['oat:750ml@Fridge', '🍲ice×2@Freezer']);
+    await add(false);
+    t.eq('Unticked: portions only, the larder untouched', await c.larder(), ['oat:750ml@Fridge', '🍲ice×4@Freezer']);
+    await c.click(c.$('[data-action="edit-portion"]'));
+    t.ok('Editing a prepared meal has no tick', !c.$('#modal [data-m="justCooked"]'));
   });
 
   scenario('Shake and eggs: several items in one meal (2.5.0)', async (c, t) => {

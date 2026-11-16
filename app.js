@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.13.0';
+  const APP_VERSION = '2.14.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -2067,6 +2067,7 @@
         <div class="row">${field('Portions', `<input type="number" inputmode="decimal" step="1" min="0" data-m="draft.qty" data-type="num" value="${esc(d.qty == null ? '' : d.qty)}">`)}
           ${field('Cooked on', `<input type="date" data-m="draft.cookedOn" value="${esc(d.cookedOn || '')}">`)}</div>
         <div class="row">${field('Location', locationSelect('draft.location', d.location || ''))}</div>
+        ${m.id ? '' : `<label class="toggle"><input type="checkbox" data-m="justCooked" ${m.justCooked ? 'checked' : ''}> Just cooked it: take the ingredients out of the larder</label>`}
         <div class="row"><button class="btn primary" data-action="save-portion">Save</button>
           ${m.id ? `<button class="btn" data-action="move-open" data-id="${m.id}">Move</button><button class="btn danger" data-action="delete-portion">Remove</button>` : ''}${cancelBtn()}</div>`;
     },
@@ -2390,7 +2391,7 @@
       toast(`Moved to the ${freezerLoc().toLowerCase()}`); render();
     },
     'edit-portion'(el) { const x = byId('pantryItems', el.dataset.id); openModal({ type: 'portion', id: x.id, draft: clone(x) }); },
-    'add-portion'() { openModal({ type: 'portion', id: null, draft: { recipeId: '', qty: null, location: fridgeLoc(), cookedOn: ui.today } }); },
+    'add-portion'() { openModal({ type: 'portion', id: null, justCooked: true, draft: { recipeId: '', qty: null, location: fridgeLoc(), cookedOn: ui.today } }); },
     'save-portion'() {
       const m = ui.modal, d = m.draft;
       if (!byId('recipes', d.recipeId)) return toast('Choose a recipe');
@@ -2399,7 +2400,12 @@
         const x = byId('pantryItems', m.id);
         Object.assign(x, { recipeId: d.recipeId, qty: Number(d.qty), location: d.location || '', cookedOn: d.cookedOn || '' });
         put('pantryItems', x);
-      } else addPortions(d.recipeId, Number(d.qty), d.location || '', d.cookedOn || '');
+      } else {
+        // Cooked off-plan: with the tick, the ingredients for these portions leave the larder, as a planned cook would.
+        const r = byId('recipes', d.recipeId), used = m.justCooked ? drawRecipe(r.id, Number(d.qty) / (r.servings || 1)) : [];
+        addPortions(d.recipeId, Number(d.qty), d.location || '', d.cookedOn || '');
+        if (used.length) toast('Ingredients taken from the larder');
+      }
       closeModal();
     },
     'delete-portion'() { remove('pantryItems', ui.modal.id); closeModal(); },
