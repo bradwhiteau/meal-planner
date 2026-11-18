@@ -987,6 +987,30 @@
     t.has('Protein total counts it', c.$('.protein-num').innerText, '2');
   });
 
+  scenario('Protein summary: eaten, planned and target (2.15.0)', async (c, t) => {
+    const r = (id, name, g) => mk(id, { name, servings: 1, proteinPerServingG: g, lactose: 'none', tags: [], method: '', ingredients: [] });
+    await c.importJson(patch({
+      recipes: [r('oat', 'Oats', 42), r('stew', 'Chicken stew', 50), r('bul', 'Bulgogi', 54), r('egg', 'Eggs', 13), r('shk', 'Shake', 30), r('ice', 'Ice cream', 28)],
+      weekPlans: [weekPlan('w0', 0, { 0: { breakfast: [{ id: 'b', recipeId: 'oat', servings: 1 }], lunch: [{ id: 'l', recipeId: 'stew', servings: 1 }],
+        dinner: [{ id: 'd', recipeId: 'bul', servings: 1 }], snack: [{ id: 'e', recipeId: 'egg', servings: 1 }, { id: 's', recipeId: 'shk', servings: 1 }] } })],
+      mealLogs: [mk('l1', { date: day(0), slot: 'snack', item: 'e', recipeId: 'egg', servings: 1, proteinG: 13, planned: true, extra: false }),
+        mk('l2', { date: day(0), slot: 'snack', recipeId: 'ice', servings: 1, proteinG: 28, planned: false, extra: true })],
+    }));
+    await c.settings(); await c.set('[data-setting="bodyweightKg"]', '97');
+    await c.go(day(0));
+    const head = () => c.$('.today-head .protein').innerText.replace(/\s+/g, ' ');
+    t.has('Eaten so far: eggs + ice cream', c.$('.protein-eaten').innerText, '41');
+    t.has('The day\'s plan: every meal card added up (42 + 50 + 54 + 71)', head(), '217 g planned');
+    t.has('The target shows once, top right', c.$('.protein-target').innerText, 'target 194 g');
+    t.ok('…and not again beside the eaten number', !c.$('.protein-num').innerText.includes('194'));
+    const cards = c.$$('.card.meal').reduce((n, x) => n + Number(x.querySelector('.card-head .muted').innerText.replace(/\D/g, '')), 0);
+    t.eq('Planned matches the meal cards', cards, 217);
+    t.ok('Bar: plan past the target, target marked', c.$('.bar-plan.enough') && c.$('.bar-target'));
+    await c.click(c.card('breakfast').querySelector('[data-action="eat"][data-item="b"]'), 150);
+    t.has('Eating breakfast moves eaten on', c.$('.protein-eaten').innerText, '83');
+    t.has('…but not the plan', head(), '217 g planned');
+  });
+
   scenario('Import and inbox rules: merge, once only, bad files', async (c, t) => {
     const recipe = mk('r1', { name: 'Original', servings: 1, proteinPerServingG: 10, lactose: 'none', tags: [], method: '', ingredients: [] });
     const p1 = patch({ recipes: [recipe] });

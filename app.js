@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.14.0';
+  const APP_VERSION = '2.15.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1567,7 +1567,23 @@
     const date = ui.date, isToday = date === ui.today;
     const { plan, i } = locateDay(date), day = plan.days[i];
     const logs = logsFor(date), got = proteinOn(date), target = proteinTarget();
-    const pct = target ? Math.min(100, got / target * 100) : 0;
+    // Each meal's protein: what's been logged in it plus what's still to eat. Their sum is the day's plan.
+    const extrasFor = k => logs.filter(l => l.extra && (l.slot === k || (k === 'snack' && !SLOTS.includes(l.slot))));
+    const slotInfo = {};
+    let planned = 0, unknown = false;
+    for (const k of SLOTS) {
+      const items = itemsOf(day, k).map(x => ({ x, r: resolveItem(plan, i, k, x) }));
+      const slotLogs = logs.filter(l => l.slot === k && !l.extra), extras = extrasFor(k);
+      const logOf = x => slotLogs.find(l => l.item === x.id);
+      const toEat = items.filter(({ x }) => !logOf(x));
+      const total = toEat.reduce((t, { r }) => t + (r.protein || 0), 0) + [...slotLogs, ...extras].reduce((t, l) => t + (Number(l.proteinG) || 0), 0);
+      if (toEat.some(({ r }) => r.protein == null)) unknown = true;
+      slotInfo[k] = { items, slotLogs, extras, logOf, total };
+      planned += total;
+    }
+    // Eaten fills the bar, the rest of the plan shows paler behind it, and a mark shows the target.
+    const scale = Math.max(target || 0, planned, got) || 1, pc = n => Math.min(100, n / scale * 100).toFixed(1);
+    const plannedTxt = planned || unknown ? ` · ${Math.round(planned)}${unknown ? '+' : ''} g planned` : '';
 
     let html = `<div class="day">
       <button class="nav" data-action="day" data-d="-1" aria-label="Previous day">‹</button>
@@ -1575,10 +1591,10 @@
         <div class="day-sub">${fmtDate(date)}${!isToday ? ` · <button class="link" data-action="day" data-d="0">back to today</button>` : ''}</div></div>
       <button class="nav" data-action="day" data-d="1" aria-label="Next day">›</button></div>
       <div class="today-head"><div class="card protein summary compact">
-        <div class="card-head"><span class="slot-label">${isToday ? "Today's protein" : 'Protein'}</span>${target ? `<span class="muted">target ${target} g</span>` : ''}</div>
-        <div class="protein-num">${Math.round(got)}<small> ${target ? `/ ${target} g` : 'g'}</small></div>
-        ${target ? `<div class="bar"><div class="bar-fill ${got >= target ? 'over' : ''}" style="width:${pct}%"></div></div>`
-          : `<button class="link" data-action="view" data-view="settings">Set bodyweight for a target</button>`}
+        <div class="card-head"><span class="slot-label">${isToday ? "Today's protein" : 'Protein'}</span>${target ? `<span class="muted protein-target">target ${target} g</span>` : ''}</div>
+        <div class="protein-num"><span class="protein-eaten">${Math.round(got)}</span><small> g eaten<span class="protein-planned">${plannedTxt}</span></small></div>
+        <div class="bar"><div class="bar-plan ${target && planned >= target ? 'enough' : ''}" style="width:${pc(planned)}%"></div><div class="bar-fill ${target && got >= target ? 'over' : ''}" style="width:${pc(got)}%"></div>${target ? `<div class="bar-target" style="left:${pc(target)}%"></div>` : ''}</div>
+        ${target ? '' : `<button class="link" data-action="view" data-view="settings">Set bodyweight for a target</button>`}
       </div>${trainingChip(day.training)}</div>`;
 
     // Reminders that are due and haven't been dealt with by a notification show up top.
@@ -1592,7 +1608,6 @@
 
     // Each meal is a compact card: one line per item, protein on the right, one action per line.
     // Extra food shows in the meal it was added to; anything without a meal goes with snacks.
-    const extrasFor = k => logs.filter(l => l.extra && (l.slot === k || (k === 'snack' && !SLOTS.includes(l.slot))));
     const doneRow = (l, sub) => {
       const lr = l.recipeId && byId('recipes', l.recipeId);
       const name = l.skipped ? 'Skipped' : esc(logLabel(l));
@@ -1604,9 +1619,7 @@
     };
     const alloc = weekAlloc(mondayOf(date));
     for (const k of SLOTS) {
-      const items = itemsOf(day, k).map(x => ({ x, r: resolveItem(plan, i, k, x) }));
-      const slotLogs = logs.filter(l => l.slot === k && !l.extra);
-      const extras = extrasFor(k);
+      const { items, slotLogs, extras, logOf, total } = slotInfo[k];
       if (!items.length && !slotLogs.length && !extras.length) {
         html += `<div class="card meal empty-meal"><div class="card-head"><span class="slot-label">${SLOT_LABEL[k]}</span>
           <span class="head-right"><span class="muted">nothing planned</span>
@@ -1614,9 +1627,6 @@
         continue;
       }
       // Each planned item is its own line: ticked (eaten, swapped or skipped) or still to eat.
-      const logOf = x => slotLogs.find(l => l.item === x.id);
-      const total = items.filter(({ x }) => !logOf(x)).reduce((t, { r }) => t + (r.protein || 0), 0)
-        + [...slotLogs, ...extras].reduce((t, l) => t + (l.proteinG || 0), 0);
       html += `<div class="card meal"><div class="card-head"><span class="slot-label">${SLOT_LABEL[k]}</span>
         <span class="head-right"><span class="muted">${gram(total)}</span>
         <button class="btn small ghost edit-only add-to" data-action="add-to" data-slot="${k}" aria-label="Add food to ${SLOT_LABEL[k].toLowerCase()}">+</button></span></div>`;

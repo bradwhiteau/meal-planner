@@ -88,6 +88,11 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 .bar { height: 12px; border-radius: 99px; background: var(--surface-2); overflow: hidden; margin-top: 8px; }
 .bar-fill { height: 100%; background: var(--accent); border-radius: 99px; transition: width .3s; }
 .bar-fill.over { background: var(--ok); }
+/* Today's bar: eaten (solid) over the day's plan (pale), with a tick at the target */
+.today-head .bar { position: relative; overflow: visible; }
+.today-head .bar-fill, .today-head .bar-plan { position: absolute; left: 0; top: 0; }
+.bar-plan { height: 100%; border-radius: 99px; background: color-mix(in srgb, var(--accent) 35%, transparent); transition: width .3s; }
+.bar-target { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); opacity: .7; border-radius: 1px; }
 
 /* buttons */
 .btn {

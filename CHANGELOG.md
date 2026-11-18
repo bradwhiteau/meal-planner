@@ -2,6 +2,13 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.15.0
+
+- **Today's protein, clearer:** the big number is what you've **eaten** so far, next to what the day's **planned** total
+  comes to (every meal card added up, including extras you've logged). The target shows once, top right. The bar fills
+  with what's eaten, shows the rest of the plan paler behind it, and has a mark at the target, so you can see at a glance
+  whether today's plan gets you there.
+
 ## 2.14.0
 
 - **Cooked something off the plan?** Larder → **+ Prepared meal** now has a **Just cooked it** tick (on by default). With
