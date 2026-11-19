@@ -190,6 +190,9 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 .ing-table th { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); text-align: right; padding: 4px 0 6px 12px; }
 .ing-table td { padding: 6px 0 6px 12px; border-top: 1px solid var(--border); text-align: right; white-space: nowrap; }
 .ing-table td:first-child { text-align: left; white-space: normal; padding-left: 0; }
+.ing-table .scale-th { white-space: nowrap; }
+.ing-table .scale-in { width: 3.6em; padding: 4px 6px; font: inherit; font-size: 1rem; font-weight: 700; text-align: center; color: var(--text, inherit);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; letter-spacing: 0; }
 .cook-head { margin: 10px 0 12px; }
 
 /* banners */

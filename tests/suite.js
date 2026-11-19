@@ -286,12 +286,29 @@
     // The recipe sheet when cooking: each ingredient for 1 serve and for the whole cook, and why that many.
     await c.click(c.card('lunch').querySelector('[data-action="show-recipe"]'), 60);
     const ingRows = () => c.$$('#modal .ing-table tr').map(r => [...r.children].map(x => x.textContent.trim()).join(' | '));
-    t.eq('Cooking sheet: 1 serve and cooking 6, side by side', ingRows(), [' | 1 serve | Cooking 6', 'Turkey mince | 166.67 g | 1 kg', 'Passata | 116.67 g | 700 g']);
+    t.eq('Cooking sheet: 1 serve and cooking 6, side by side', ingRows(), [' | 1 serve | serves', 'Turkey mince | 166.67 g | 1 kg', 'Passata | 116.67 g | 700 g']);
+    t.eq('…the serves box starts at the cook (6)', c.$('#recipe-scale').value, '6');
     t.has('…and says what the 6 are for', c.modalText(), 'Cooking 6 serves | this meal · 2 for leftovers (Tue dinner, Thu dinner) · 3 spare for the larder');
+    // Typing a different number of serves rescales the right-hand column, and keeps the box.
+    const box = c.$('#recipe-scale');
+    await c.set('#recipe-scale', '3');
+    t.eq('Typing 3 serves rescales the column', ingRows(), [' | 1 serve | serves', 'Turkey mince | 166.67 g | 500 g', 'Passata | 116.67 g | 350 g']);
+    t.ok('…without redrawing the box out from under you', c.$('#recipe-scale') === box);
+    await c.set('#recipe-scale', '');
+    t.eq('An empty box leaves the column blank', ingRows().slice(1), ['Turkey mince | 166.67 g | ', 'Passata | 116.67 g | ']);
     await c.click('[data-action="close-modal"]');
     await c.click(c.card('breakfast').querySelector('[data-action="show-recipe"]'), 60);
-    t.eq('A single serve shows just the 1 serve column', ingRows(), [' | 1 serve', 'Steel-cut oats | 80 g']);
+    t.eq('A single serve starts the serves box at the recipe\'s serves', ingRows(), [' | 1 serve | serves', 'Steel-cut oats | 80 g | 80 g']);
     await c.click('[data-action="close-modal"]');
+    // The Recipes tab opens the same sheet (box at the recipe's own serves), with Edit for the editor.
+    await c.tab('recipes');
+    await c.click(c.$$('#recipe-list .list-row').find(b => b.textContent.includes('Bolognese')), 60);
+    t.ok('Recipes tab opens the recipe sheet', !!c.$('#modal .ing-table'));
+    t.eq('…serves box at the recipe\'s 6', c.$('#recipe-scale').value, '6');
+    await c.click('#modal [data-action="edit-recipe"]', 60);
+    t.has('Edit opens the recipe editor', c.modalText(), 'Edit recipe');
+    await c.click('[data-action="close-modal"]');
+    await c.go(day(0));
     await c.click(c.card('breakfast').querySelector('[data-action="eat"]'), 150);
     t.ok('Single serve: no sheet', c.$('#modal').hidden);
     t.eq('Oats: 80 g out', await c.larder(), ['mince:1000g@', 'oats:290g@', 'passata:700g@']);

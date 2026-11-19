@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.15.0';
+  const APP_VERSION = '2.16.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1912,7 +1912,7 @@
     const list = sortByName(S.recipes).filter(r => (!ui.recipeTag || r.tags.includes(ui.recipeTag) || (ui.recipeTag === 'lactose-free' && r.lactose === 'none'))
       && (!q || r.name.toLowerCase().includes(q) || r.ingredients.some(i => ingName(i.ingredientId).toLowerCase().includes(q))));
     if (!list.length) return `<p class="muted center">No recipes match.</p>`;
-    return list.map(r => `<button class="list-row" data-action="edit-recipe" data-id="${r.id}"><span class="grow">
+    return list.map(r => `<button class="list-row" data-action="show-recipe" data-id="${r.id}"><span class="grow">
       <span class="name">${esc(r.name)}</span> ${lactoseBadge(r)}
       <div class="sub">${r.proteinPerServingG != null ? `${r.proteinPerServingG} g protein` : 'protein not set'} · serves ${r.servings}${r.tags.length ? ' · ' + esc(r.tags.join(', ')) : ''}</div>
     </span><span class="muted">›</span></button>`).join('');
@@ -2236,17 +2236,19 @@
     recipeView(m) {
       const r = byId('recipes', m.id);
       if (!r) return `<h2>Recipe not found</h2><div class="row">${cancelBtn('Close')}</div>`;
-      const per = 1 / (r.servings || 1), cook = m.cook > 1 ? m.cook : 0;
-      const amt = (x, k) => { const n = norm((Number(x.qty) || 0) * per * k, x.unit); return esc(fmtQty(round(n.qty, 2), n.unit)); };
+      const cook = m.cook > 1 ? m.cook : 0;
+      // The right-hand column scales to however many serves you type in; it starts at the planned cook.
+      if (m.scale === undefined) m.scale = cook || r.servings || 1;
       return `<h2>${esc(r.name)}</h2>
         <p>${lactoseBadge(r)} <span class="muted">${r.proteinPerServingG != null ? `${r.proteinPerServingG} g protein per serve` : ''}${r.tags.length ? (r.proteinPerServingG != null ? ' · ' : '') + esc(r.tags.join(', ')) : ''}</span></p>
         ${cook ? `<p class="cook-head"><b>Cooking ${cook} serves</b>${m.why ? `<br><span class="muted">${esc(m.why)}</span>` : ''}</p>` : ''}
         <h3>Ingredients</h3>
-        <table class="ing-table"><thead><tr><th></th><th>1 serve</th>${cook ? `<th>Cooking ${cook}</th>` : ''}</tr></thead>
-          <tbody>${r.ingredients.map(x => `<tr><td>${esc(ingName(x.ingredientId))}</td><td>${amt(x, 1)}</td>${cook ? `<td><b>${amt(x, cook)}</b></td>` : ''}</tr>`).join('')}</tbody></table>
+        <table class="ing-table"><thead><tr><th></th><th>1 serve</th>
+          <th class="scale-th"><input id="recipe-scale" class="scale-in" type="number" inputmode="decimal" min="0" step="any" value="${esc(m.scale ?? '')}" aria-label="Serves to cook"> serves</th></tr></thead>
+          <tbody>${r.ingredients.map((x, i) => `<tr><td>${esc(ingName(x.ingredientId))}</td><td>${recipeAmt(r, x, 1)}</td><td class="scaled" data-i="${i}"><b>${recipeAmt(r, x, m.scale)}</b></td></tr>`).join('')}</tbody></table>
         ${r.nightBefore ? `<p><b>Night before:</b> ${esc(r.nightBefore)}</p>` : ''}
         ${r.method ? `<h3>Method</h3><p class="method">${esc(r.method)}</p>` : ''}
-        <div class="row">${cancelBtn('Close')}</div>`;
+        <div class="row"><button class="btn edit-only" data-action="edit-recipe" data-id="${r.id}">Edit</button>${cancelBtn('Close')}</div>`;
     },
     inbox() {
       const items = drive.pending;
@@ -2267,6 +2269,13 @@
         <div class="row"><button class="btn primary" data-action="save-template-ok">Save</button>${cancelBtn()}</div>`;
     },
   };
+
+  // One ingredient's amount for k serves of a recipe (blank when k isn't a usable number).
+  function recipeAmt(r, x, k) {
+    if (!(Number(k) > 0)) return '';
+    const n = norm((Number(x.qty) || 0) / (r.servings || 1) * Number(k), x.unit);
+    return esc(fmtQty(round(n.qty, 2), n.unit));
+  }
 
   // Hooks for modal fields whose change affects other fields; returns true if the sheet needs redrawing.
   function onModalChange(key) {
@@ -2943,6 +2952,11 @@
     } else if (el.id === 'pick-q' && ui.modal && e.type === 'input') {
       // Input only: redrawing on blur's change event would swap the list out from under the tap.
       ui.modal.q = el.value; $('#pick-list').innerHTML = pickRows(ui.modal);
+    } else if (el.id === 'recipe-scale' && ui.modal && ui.modal.type === 'recipeView') {
+      // Only the scaled cells change, so the box keeps focus (and the keyboard stays up) while typing.
+      const m = ui.modal, r = byId('recipes', m.id);
+      m.scale = el.value === '' ? null : Number(el.value);
+      document.querySelectorAll('#modal td.scaled').forEach(td => { td.innerHTML = `<b>${recipeAmt(r, r.ingredients[td.dataset.i], m.scale)}</b>`; });
     } else if (el.id === 'recipe-q') {
       ui.recipeQuery = el.value; $('#recipe-list').innerHTML = recipeList();
     } else if (el.id === 'larder-q') {

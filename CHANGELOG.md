@@ -2,6 +2,13 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.16.0
+
+- **Scale a recipe to any number of serves:** the recipe sheet has a third column beside **1 serve** with a box in its
+  heading. Type how many serves you're cooking and the amounts update as you type. It starts at the planned cook when
+  opened from Today, or the recipe's own serves when opened from Recipes.
+- **Recipes tab opens the recipe sheet** (ingredients and method) rather than the editor. Tap **Edit** on the sheet to change it.
+
 ## 2.15.0
 
 - **Today's protein, clearer:** the big number is what you've **eaten** so far, next to what the day's **planned** total
