@@ -11,6 +11,9 @@ meal-planner-data/            (Google Drive, next to the meal-planner repo folde
 
 The two folder IDs are in `meal-planner-data/README.md` in Drive, not in this repo.
 
+Planning a week of meals (what to weigh up, and agreeing the plan before writing it) is in `PLANNING.md` in the
+`meal-planner-data` folder on Drive, next to the inbox and outbox.
+
 Naming: the **Larder** on screen is the `pantryItems` store in the data. The data name predates the rename and is kept
 so older exports, the tablet and patches keep working.
 

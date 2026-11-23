@@ -25,3 +25,4 @@ Data lives on his phone (IndexedDB); Google Drive is a mailbox to Claude (see DA
 - When testing locally by hand, an old service worker can serve stale files: unregister it and clear caches first
   (the test page does this itself).
 - Data changes from Claude go through inbox patch files (DATA.md), never by editing Brad's data directly.
+- Planning a week of meals: follow `meal-planner-data/PLANNING.md` on Drive (kept out of the repo: it holds Brad's preferences).
