@@ -41,7 +41,10 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
   - Tap a day's training tag (Weights / Treadmill / HIIT / Rest) to change it. New weeks start from Lift Log's schedule.
   - **Save as template** keeps a week you like for later.
 - **Shop tab:** grouped by store, then aisle. Tap a row, or swipe it right, to tick it. The **$** button sets price, quantity, store, aisle and "local".
-  Store, aisle and local are saved to the ingredient, so you fix an item once. **Regenerate** after changing the plan or pantry; ticks, prices and hand-added items are kept.
+  Store, aisle and local are saved to the ingredient, so you fix an item once. A store you shop at in more than one
+  place can have **branches** (Settings → Stores, e.g. `Supermarket: Mundaring, Kalamunda`): its section on the list gets a
+  **Shopping at** choice, aisles are kept per branch, and items not yet mapped at that branch sit at the bottom with the
+  first branch's aisle as a hint. **Regenerate** after changing the plan or pantry; ticks, prices and hand-added items are kept.
   **One list for the next shop:** generating a list for this week or a later one covers every meal still to come up to the
   end of that week, plus "Keep at least" top-ups. Anything unbought on earlier weeks' lists moves onto it (hand-added items
   show "carried over"), so generate whenever you're about to shop and use the one list. The Shop tab opens on it.

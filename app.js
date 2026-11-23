@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.16.0';
+  const APP_VERSION = '2.17.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -535,12 +535,43 @@
     if (it.pantryAdded && it.ingredientId) pantryTake(it.ingredientId, it.pantryAdded.qty, it.pantryAdded.unit, it.pantryAdded.location);
     delete it.pantryAdded;
   }
+  // Branches: a store with two or more (settings.branches.Woolworths = ['Mundaring', 'Kalamunda']) gets a
+  // "Shopping at" choice on the list (settings.shopAt). The first branch's aisle is the plain `aisle` field, so
+  // existing aisles belong to it; other branches' aisles go in `aisles: {Kalamunda: '7'}`. Stores without
+  // branches work exactly as before.
+  function branchesOf(store) {
+    const b = settings.branches && settings.branches[store];
+    return Array.isArray(b) && b.length > 1 ? b : null;
+  }
+  function branchAt(store) {
+    const b = branchesOf(store), cur = settings.shopAt && settings.shopAt[store];
+    return b ? (b.includes(cur) ? cur : b[0]) : '';
+  }
+  // The aisle of an ingredient or hand-added item at the branch being shopped. Not mapped there yet: no aisle,
+  // and the first branch's aisle as a hint.
+  function aisleAt(o, store) {
+    const b = branchesOf(store), br = branchAt(store);
+    if (!b || br === b[0]) return { aisle: o.aisle || '', hint: '' };
+    const a = o.aisles && o.aisles[br];
+    return a ? { aisle: a, hint: '' } : { aisle: '', hint: o.aisle ? `${b[0]}: ${aisleLabel(o.aisle)}` : '' };
+  }
+  // Saving an aisle typed while shopping at a branch: it's that branch's aisle; the others keep theirs.
+  function setAisleAt(o, store, v) {
+    v = String(v || '').trim();
+    const b = branchesOf(store), br = branchAt(store);
+    if (!b || br === b[0]) { o.aisle = v; return; }
+    const all = { ...(o.aisles || {}) };
+    if (v) all[br] = v; else delete all[br];
+    if (Object.keys(all).length) o.aisles = all; else delete o.aisles;
+  }
+  const aisleField = store => (branchesOf(store) ? `Aisle at ${branchAt(store)}` : 'Aisle');
   // Store/aisle/local follow the ingredient, so fixing an ingredient fixes every list.
   function itemInfo(it) {
-    const ing = it.ingredientId && byId('ingredients', it.ingredientId);
+    const ing = it.ingredientId && byId('ingredients', it.ingredientId), src = ing || it;
+    const store = src.store || 'Other', at = aisleAt(src, store);
     return {
-      name: ing ? ing.name : it.text || '(item)', store: (ing ? ing.store : it.store) || 'Other',
-      aisle: (ing ? ing.aisle : it.aisle) || '', isLocal: ing ? !!ing.isLocal : !!it.isLocal,
+      name: ing ? ing.name : it.text || '(item)', store, aisle: at.aisle, aisleHint: at.hint,
+      branch: branchAt(store), isLocal: !!src.isLocal,
     };
   }
   function storeOrder() {
@@ -820,7 +851,7 @@
 
   // ---------- export / import ----------
   const MEAL_COLS = ['date', 'day', 'slot', 'training', 'planned', 'extra', 'recipe', 'text', 'servings', 'protein_g', 'lactose', 'logged_at'];
-  const SHOP_COLS = ['week_start', 'store', 'aisle', 'item', 'qty', 'unit', 'packs', 'buy_qty', 'buy_unit', 'checked', 'price_aud', 'local', 'source', 'for_recipes'];
+  const SHOP_COLS = ['week_start', 'store', 'branch', 'aisle', 'item', 'qty', 'unit', 'packs', 'buy_qty', 'buy_unit', 'checked', 'price_aud', 'local', 'source', 'for_recipes'];
   function mealRow(l) {
     const r = l.recipeId && byId('recipes', l.recipeId), { plan, i } = locateDay(l.date);
     return {
@@ -832,7 +863,7 @@
   function shopRow(it) {
     const x = itemInfo(it);
     return {
-      week_start: it.weekStart, store: x.store, aisle: x.aisle, item: x.name, qty: it.qty == null ? '' : it.qty, unit: it.unit || '',
+      week_start: it.weekStart, store: x.store, branch: x.branch, aisle: x.aisle, item: x.name, qty: it.qty == null ? '' : it.qty, unit: it.unit || '',
       packs: it.packs || '', buy_qty: (boughtOf(it) || {}).qty || '', buy_unit: (boughtOf(it) || {}).unit || '',
       checked: !!it.checked, price_aud: it.price == null ? '' : it.price, local: x.isLocal, source: it.manual ? 'manual' : 'plan', for_recipes: it.forRecipes || '',
     };
@@ -892,6 +923,7 @@
       if (r.location != null && !isStr(r.location)) delete r.location;
       if (!(Number(r.keepQty) > 0) || !isStr(r.keepUnit) || !r.keepUnit.trim()) { delete r.keepQty; delete r.keepUnit; }
       if (r.cookFromFrozen !== true) delete r.cookFromFrozen;
+      cleanAisles(r);
       return true;
     },
     recipes: r => {
@@ -924,6 +956,7 @@
       for (const k of ['buyUnit', 'boughtUnit']) if (r[k] != null && !isStr(r[k])) delete r[k];
       if (r.pantryAdded != null && !(isObj(r.pantryAdded) && Number(r.pantryAdded.qty) > 0 && isStr(r.pantryAdded.unit))) delete r.pantryAdded;
       else if (r.pantryAdded && r.pantryAdded.location != null && !isStr(r.pantryAdded.location)) delete r.pantryAdded.location;
+      cleanAisles(r);
       return true;
     },
     pantryItems: r => {
@@ -944,8 +977,20 @@
       }
       return true;
     },
-    settings: r => r.id === 'settings' && Array.isArray(r.stores),
+    settings: r => {
+      if (r.id !== 'settings' || !Array.isArray(r.stores)) return false;
+      const b = isObj(r.branches) ? Object.entries(r.branches).map(([k, v]) => [k, Array.isArray(v) ? v.filter(isStr) : []]).filter(([, v]) => v.length > 1) : [];
+      if (b.length) r.branches = Object.fromEntries(b); else delete r.branches;
+      const at = isObj(r.shopAt) ? Object.entries(r.shopAt).filter(([, v]) => isStr(v)) : [];
+      if (at.length) r.shopAt = Object.fromEntries(at); else delete r.shopAt;
+      return true;
+    },
   };
+  // Per-branch aisles ({Kalamunda: '7'}): strings only.
+  function cleanAisles(r) {
+    const a = isObj(r.aisles) ? Object.entries(r.aisles).filter(([, v]) => isStr(v) && v.trim()) : [];
+    if (a.length) r.aisles = Object.fromEntries(a); else delete r.aisles;
+  }
   function parseIncoming(text) {
     if (text.length > MAX_FILE_BYTES) throw new Error('File is too large');
     let d;
@@ -1326,12 +1371,12 @@
       for (const store of storeOrder()) {
         const inStore = left.filter(x => itemInfo(x).store === store || (store === 'Other' && !storeOrder().slice(0, -1).includes(itemInfo(x).store)));
         if (!inStore.length) continue;
-        out.push(`<h3>${e(store)}</h3><ul>`);
-        inStore.sort((a, b) => String(itemInfo(a).aisle).localeCompare(String(itemInfo(b).aisle), undefined, { numeric: true }) || itemInfo(a).name.localeCompare(itemInfo(b).name))
+        out.push(`<h3>${e(store)}${branchAt(store) ? ` (at ${e(branchAt(store))})` : ''}</h3><ul>`);
+        inStore.sort((a, b) => String(itemInfo(a).aisle || '~').localeCompare(String(itemInfo(b).aisle || '~'), undefined, { numeric: true }) || itemInfo(a).name.localeCompare(itemInfo(b).name))
           .forEach(x => {
             const info = itemInfo(x);
             const qty = x.packs > 0 && x.buyUnit ? `${x.packs} × ${fmtQty(round(x.buyQty / x.packs, 3), x.buyUnit)}` : fmtQty(x.qty, x.unit);
-            out.push(`<li>${e(info.name)}${qty ? ` — ${e(qty)}` : ''}${info.aisle ? ` (${e(aisleLabel(info.aisle))})` : ''}${info.isLocal ? ' (local)' : ''}</li>`);
+            out.push(`<li>${e(info.name)}${qty ? ` — ${e(qty)}` : ''}${info.aisle ? ` (${e(aisleLabel(info.aisle))})` : info.aisleHint ? ` (not mapped here; ${e(info.aisleHint)})` : ''}${info.isLocal ? ' (local)' : ''}</li>`);
           });
         out.push('</ul>');
       }
@@ -1533,14 +1578,14 @@
     return `<select data-m="${m}">${opts.map(u => `<option value="${esc(u)}" ${u === cur ? 'selected' : ''}>${esc(u)}${fits(u) ? '' : " (doesn't match recipes)"}</option>`).join('')}</select>`;
   }
   const locationSelect = (m, cur) => `<select data-m="${m}"><option value="">—</option>${[...new Set([...settings.locations, cur].filter(Boolean))].map(l => `<option ${l === cur ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
-  const storeSelect = (m, cur) => `<select data-m="${m}">${[...new Set([...settings.stores, cur].filter(Boolean))].map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
+  const storeSelect = (m, cur) => `<select data-m="${m}" data-rerender>${[...new Set([...settings.stores, cur].filter(Boolean))].map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
   // A bare number (or number + letter) reads as "Aisle 13"; named aisles show as they are.
   const aisleLabel = a => (/^\d+[a-z]?$/i.test(String(a || '').trim()) ? `Aisle ${String(a).trim()}` : a);
   // Suggestions under name and aisle fields, drawn by the app. (Not <datalist>: Android Chrome leaves its popup
   // floating on screen when the sheet redraws or closes under it.) Tapping one fills the field as if typed.
   const SUGGEST = {
     ing: () => sortByName(S.ingredients).map(i => i.name),
-    aisle: () => [...new Set(S.ingredients.map(i => i.aisle).filter(Boolean))].sort(),
+    aisle: () => [...new Set(S.ingredients.flatMap(i => [i.aisle, ...Object.values(i.aisles || {})]).filter(Boolean))].sort(),
   };
   function showSuggest(input) {
     const next = input.nextElementSibling;
@@ -1796,16 +1841,24 @@
       // Each store folds; the fold is remembered per store on this device (new stores start open).
       html += `<details class="shop-store ${got === inStore.length ? 'done' : ''}" data-store="${esc(store)}" ${closed.includes(store) ? '' : 'open'}>
         <summary class="store-head"><h2>${esc(store)}</h2><span class="muted">${got === inStore.length ? '✓ ' : ''}${got} of ${inStore.length} in trolley${storeTotal ? ` · <b class="store-total">${money(storeTotal)}</b>` : ''}</span></summary>`;
-      const aisles = [...new Set(shown.map(i => itemInfo(i).aisle))].sort((a, b) => (a || '~').localeCompare(b || '~', undefined, { numeric: true }));
+      // A store with branches: which one you're in decides the aisles (one choice per store, kept with the data).
+      const branches = branchesOf(store), here = branchAt(store);
+      if (branches) {
+        html += isViewer() ? `<div class="branch-pick muted">Shopping at ${esc(here)}</div>`
+          : `<label class="branch-pick"><span class="muted">Shopping at</span> <select data-shop-at="${esc(store)}">${branches.map(b => `<option ${b === here ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></label>`;
+      }
+      // Aisles in order (with Other, items with no aisle), then the ones not mapped at this branch yet, last.
+      const UNMAPPED = '\u0001', key = i => { const x = itemInfo(i); return x.aisle || (x.aisleHint ? UNMAPPED : ''); };
+      const aisles = [...new Set(shown.map(key))].sort((a, b) => (a === UNMAPPED) - (b === UNMAPPED) || (a || '~').localeCompare(b || '~', undefined, { numeric: true }));
       for (const a of aisles) {
-        const rows = shown.filter(i => itemInfo(i).aisle === a)
+        const rows = shown.filter(i => key(i) === a)
           .sort((x, y) => (x.checked - y.checked) || itemInfo(x).name.localeCompare(itemInfo(y).name));
-        html += `<div class="aisle">${esc(a ? aisleLabel(a) : 'Other')}</div>` + rows.map(it => {
+        html += `<div class="aisle">${esc(a === UNMAPPED ? `Not mapped at ${here} yet` : a ? aisleLabel(a) : 'Other')}</div>` + rows.map(it => {
           const x = itemInfo(it);
           return `<div class="shop-row"><button class="shop-item ${it.checked ? 'checked' : ''}" data-action="tick" data-id="${it.id}">
             <span class="tick">${it.checked ? '✓' : ''}</span>
             <span class="si-main"><span class="si-name">${esc(x.name)}</span>
-              <span class="si-qty">${shopQty(it)}${x.isLocal ? ' · <span class="badge local">local</span>' : ''}${it.carried ? ' · carried over' : ''}</span>
+              <span class="si-qty">${shopQty(it)}${x.isLocal ? ' · <span class="badge local">local</span>' : ''}${it.carried ? ' · carried over' : ''}${x.aisleHint ? ` · <span class="si-hint">${esc(x.aisleHint)}</span>` : ''}</span>
               ${shopNeed(it)}</span>
             ${it.price != null && it.price !== '' ? `<span class="si-price">${money(it.price)}</span>` : ''}</button>
             <button class="si-more edit-only" data-action="edit-item" data-id="${it.id}" aria-label="Edit ${esc(x.name)}">$</button></div>`;
@@ -1932,7 +1985,7 @@
       if (!list.length) continue;
       html += `<section><div class="store-head"><h2>${esc(store)}</h2></div>` + list.map(i => `<button class="list-row" data-action="edit-ingredient" data-id="${i.id}">
         <span class="grow"><span class="name">${esc(i.name)}</span> ${i.isLocal ? '<span class="badge local">local</span>' : ''}
-        <div class="sub">${esc(i.aisle ? aisleLabel(i.aisle) : 'no aisle')} · ${esc(i.defaultUnit || '')}${i.lastPrice != null ? ' · ' + money(i.lastPrice) : ''}</div></span><span class="muted">›</span></button>`).join('') + '</section>';
+        <div class="sub">${esc((at => (at.aisle ? aisleLabel(at.aisle) : at.hint ? `not mapped at ${branchAt(i.store)}` : 'no aisle'))(aisleAt(i, i.store)))} ·${esc(i.defaultUnit || '')}${i.lastPrice != null ? ' · ' + money(i.lastPrice) : ''}</div></span><span class="muted">›</span></button>`).join('') + '</section>';
     }
     return html + '</div>';
   }
@@ -1955,7 +2008,9 @@
         <button class="btn wide" data-action="ics">Add the next 7 days to my calendar</button>
         <p class="muted">Android can't wake a closed web app at a set time, so the calendar file is the reliable option: open it with Google Calendar once a week.</p></div>
       <div class="card edit-only"><h3>Stores</h3>
-        ${field('One per line, in the order you shop', `<textarea rows="5" data-setting="stores">${esc(settings.stores.join('\n'))}</textarea>`)}</div>
+        ${field('One per line, in the order you shop', `<textarea rows="5" data-setting="stores">${esc(settings.stores.join('\n'))}</textarea>`)}
+        ${field('Branches (optional)', `<textarea rows="2" data-setting="branches" placeholder="Supermarket: Mundaring, Kalamunda">${esc(Object.entries(settings.branches || {}).map(([s, b]) => `${s}: ${b.join(', ')}`).join('\n'))}</textarea>`)}
+        <p class="muted">For a store you shop at in more than one place, one line each: the store, a colon, then its branches. Its aisles are kept per branch, and the list asks which one you're in. The first branch keeps the aisles you already have.</p></div>
       <div class="card edit-only"><h3>Larder locations</h3>
         ${field('One per line, in the order you want them shown', `<textarea rows="6" data-setting="locations">${esc(settings.locations.join('\n'))}</textarea>`)}</div>
       ${driveCard()}
@@ -2146,7 +2201,7 @@
       return `<h2>${esc(d.name || 'Ingredient')}</h2>
         ${field('Name', `<input type="text" data-m="draft.name" value="${esc(d.name)}">`)}
         <div class="row">${field('Store', storeSelect('draft.store', d.store))}
-          ${field('Aisle', `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
+          ${field(aisleField(d.store), `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
         <div class="row">${field('Larder location', locationSelect('draft.location', d.location || ''))}
           ${field('Recipe unit', `<input type="text" data-m="draft.defaultUnit" value="${esc(d.defaultUnit)}">`)}</div>
         <div class="row">${field('Pack size', `<input type="number" inputmode="decimal" data-m="draft.packQty" data-type="num" data-rerender value="${esc(d.packQty == null ? '' : d.packQty)}" placeholder="e.g. 1">`)}
@@ -2168,7 +2223,7 @@
             ${field('Unit', `<input type="text" data-m="draft.unit" value="${esc(d.unit)}">`)}
             ${field('Price ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.price" data-type="num" value="${esc(d.price == null ? '' : d.price)}">`)}</div>
           <div class="row">${field('Store', storeSelect('draft.store', d.store))}
-            ${field('Aisle', `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
+            ${field(aisleField(d.store), `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
           <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local</label>
           <p class="muted">An item that matches an ingredient's name goes into the larder when ticked.</p>
           <div class="row"><button class="btn primary" data-action="save-item">Save</button>
@@ -2183,7 +2238,7 @@
           ${field('Unit', unitSelect('draft.boughtUnit', ing, d.boughtUnit || ''))}
           ${field('Price ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.price" data-type="num" value="${esc(d.price == null ? '' : d.price)}">`)}</div>
         <div class="row">${field('Store', storeSelect('draft.store', d.store))}
-          ${field('Aisle', `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
+          ${field(aisleField(d.store), `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
         <div class="row">${field('Larder location', locationSelect('draft.location', d.location || ''))}</div>
         <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local</label>
         <p class="muted">Price is what this line cost. Pack size, price, store, aisle and location are saved to the ingredient, so future lists buy whole packs at the right price. Ticking puts what you bought in the larder.</p>
@@ -2599,7 +2654,8 @@
         // Pack size, store, aisle, location and price belong to the ingredient, so future lists use them.
         const pq = Number(d.packQty) > 0 ? Number(d.packQty) : null, pu = String(d.packUnit || '').trim();
         if (pq && pu) Object.assign(ing, { packQty: pq, packUnit: pu }); else { delete ing.packQty; delete ing.packUnit; }
-        Object.assign(ing, { store: d.store, aisle: d.aisle, isLocal: !!d.isLocal, location: d.location || '' });
+        Object.assign(ing, { store: d.store, isLocal: !!d.isLocal, location: d.location || '' });
+        setAisleAt(ing, d.store, d.aisle);
         if (!it.checked) {
           const pk = packInfo(ing, it.qty, it.unit);
           Object.assign(it, { packs: pk ? pk.packs : null, buyQty: pk ? pk.buyQty : null, buyUnit: pk ? pk.buyUnit : null });
@@ -2632,7 +2688,8 @@
         Object.assign(it, { qty: d.qty, unit: d.unit, price: d.price });
         // A typed name that matches an ingredient takes that ingredient's details.
         const known = ingByName(d.text);
-        Object.assign(it, known ? { ingredientId: known.id, text: null } : { text: d.text.trim(), store: d.store, aisle: d.aisle, isLocal: !!d.isLocal });
+        Object.assign(it, known ? { ingredientId: known.id, text: null } : { text: d.text.trim(), store: d.store, isLocal: !!d.isLocal });
+        if (!known) setAisleAt(it, d.store, d.aisle);
         if (known && hasNum(d.price)) { known.lastPrice = Number(d.price); put('ingredients', known); }
       }
       put('shoppingItems', it); closeModal();
@@ -2746,13 +2803,14 @@
       if (!confirm(used ? 'This recipe is in a week plan or template. Delete it anyway?' : 'Delete this recipe?')) return;
       remove('recipes', id); closeModal();
     },
-    'edit-ingredient'(el) { const i = byId('ingredients', el.dataset.id); openModal({ type: 'ingredient', id: i.id, draft: clone(i) }); },
+    'edit-ingredient'(el) { const i = byId('ingredients', el.dataset.id); openModal({ type: 'ingredient', id: i.id, draft: { ...clone(i), aisle: aisleAt(i, i.store).aisle } }); },
     'save-ingredient'() {
       const m = ui.modal, d = m.draft, i = byId('ingredients', m.id);
       if (!String(d.name || '').trim()) return toast('Name it');
       const clash = ingByName(d.name);
       if (clash && clash.id !== i.id) return toast('Another ingredient already has that name');
-      Object.assign(i, { name: d.name.trim(), store: d.store, aisle: (d.aisle || '').trim(), defaultUnit: (d.defaultUnit || '').trim(), lastPrice: d.lastPrice, isLocal: !!d.isLocal, location: d.location || '' });
+      Object.assign(i, { name: d.name.trim(), store: d.store, defaultUnit: (d.defaultUnit || '').trim(), lastPrice: d.lastPrice, isLocal: !!d.isLocal, location: d.location || '' });
+      setAisleAt(i, d.store, d.aisle);
       const pq = Number(d.packQty) > 0 ? Number(d.packQty) : null, pu = String(d.packUnit || '').trim();
       if (pq && pu) Object.assign(i, { packQty: pq, packUnit: pu, packPrice: hasNum(d.packPrice) ? Number(d.packPrice) : null });
       else { delete i.packQty; delete i.packUnit; }
@@ -2994,12 +3052,26 @@
       render(); renderDriveChip();
       return;
     }
+    if (el.dataset.shopAt) {
+      if (isViewer()) { render(); return; }
+      settings.shopAt = { ...(settings.shopAt || {}), [el.dataset.shopAt]: el.value };
+      saveSettings(); render();
+      return;
+    }
     if (el.dataset.setting) {
       if (isViewer()) { render(); return; }
       const k = el.dataset.setting;
       let v = el.value.trim();
       if (k === 'stores' || k === 'locations') v = v.split('\n').map(s => s.trim()).filter(Boolean);
-      else if (el.type === 'number') v = v === '' ? null : Number(v);
+      else if (k === 'branches') {
+        // "Supermarket: Mundaring, Kalamunda", one store per line; a store needs two branches to count.
+        v = {};
+        for (const line of el.value.split('\n')) {
+          const at = line.indexOf(':'), store = line.slice(0, at).trim();
+          const list = [...new Set(line.slice(at + 1).split(',').map(s => s.trim()).filter(Boolean))];
+          if (at > 0 && store && list.length > 1) v[store] = list;
+        }
+      } else if (el.type === 'number') v = v === '' ? null : Number(v);
       if (k === 'proteinTargetGPerKg' && !(v > 0)) v = DEFAULT_SETTINGS.proteinTargetGPerKg;
       setPath(settings, k, v); saveSettings(); render();
       return;

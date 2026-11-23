@@ -2,6 +2,14 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.17.0
+
+- **Aisles per branch:** for a store you shop at in more than one place, add its branches under Settings → Stores
+  (e.g. `Supermarket: Mundaring, Kalamunda`). That store's section of the shopping list gets a **Shopping at** choice,
+  and the aisles follow it. Your existing aisles belong to the first branch. At another branch, items not mapped yet sit
+  under **Not mapped at … yet**, showing the first branch's aisle as a hint; set an aisle there (the **$** button) and it
+  saves for that branch only. Stores without branches are unchanged. The shopping CSV gains a `branch` column.
+
 ## 2.16.0
 
 - **Scale a recipe to any number of serves:** the recipe sheet has a third column beside **1 serve** with a box in its

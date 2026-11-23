@@ -987,6 +987,55 @@
     t.eq('Opening one by hand is remembered', opens(), ['Butcher:open', 'Supermarket:shut']);
   });
 
+  scenario('Two Woolworths: aisles kept per branch, picked on the list (2.17.0)', async (c, t) => {
+    await c.importJson(patch({
+      ingredients: [mk('milk', { name: 'Milk', defaultUnit: 'L', store: 'Supermarket', aisle: '2' }),
+        mk('bread', { name: 'Bread', defaultUnit: 'each', store: 'Supermarket', aisle: '3' }),
+        mk('steak', { name: 'Steak', defaultUnit: 'g', store: 'Butcher', aisle: 'Meat' }),
+        mk('junk', { name: 'Junk', defaultUnit: 'each', store: 'Supermarket', aisle: '4', aisles: 'not an object' })],
+      shoppingItems: [mk('s1', { weekStart: day(0), ingredientId: 'milk', text: null, qty: 2, unit: 'L', checked: false, manual: false }),
+        mk('s2', { weekStart: day(0), ingredientId: 'bread', text: null, qty: 1, unit: 'each', checked: false, manual: false }),
+        mk('s3', { weekStart: day(0), ingredientId: 'steak', text: null, qty: 500, unit: 'g', checked: false, manual: false }),
+        mk('s4', { weekStart: day(0), ingredientId: null, text: 'Foil', store: 'Supermarket', aisle: '9', checked: false, manual: true })],
+    }));
+    t.ok('A bad aisles field from a file is dropped', !('aisles' in (await c.all('ingredients')).find(i => i.id === 'junk')));
+    const heads = store => [...c.store(store).querySelectorAll('.aisle')].map(a => a.textContent);
+    await c.shop(day(0));
+    t.ok('No branches set up: no "Shopping at" anywhere', !c.$('.branch-pick'));
+    t.eq('Aisles as before', heads('Supermarket'), ['Aisle 2', 'Aisle 3', 'Aisle 9']);
+
+    await c.settings();
+    await c.set('[data-setting="branches"]', 'Supermarket: Mundaring, Kalamunda\nButcher: Only one');
+    const st = (await c.all('settings'))[0];
+    t.eq('Branches saved; a store with one branch is ignored', st.branches, { Supermarket: ['Mundaring', 'Kalamunda'] });
+
+    await c.shop(day(0));
+    t.ok('Supermarket asks which branch', !!c.store('Supermarket').querySelector('select[data-shop-at]'));
+    t.ok('…the Butcher doesn\'t', !c.store('Butcher').querySelector('.branch-pick'));
+    t.eq('Starts at the first branch, with the aisles you already had', [c.$('[data-shop-at]').value, ...heads('Supermarket')], ['Mundaring', 'Aisle 2', 'Aisle 3', 'Aisle 9']);
+
+    await c.set('[data-shop-at="Supermarket"]', 'Kalamunda');
+    t.eq('At Kalamunda nothing is mapped yet', heads('Supermarket'), ['Not mapped at Kalamunda yet']);
+    t.has('…each item shows its Mundaring aisle as a hint', c.shopText('Milk'), 'Mundaring: Aisle 2');
+    t.eq('The choice is kept with the data', (await c.all('settings'))[0].shopAt, { Supermarket: 'Kalamunda' });
+
+    await c.click('[data-action="edit-item"][data-id="s1"]', 60);
+    t.has('The aisle box says which branch it\'s for', c.modalText(), 'Aisle at Kalamunda');
+    await c.set('#modal [data-m="draft.aisle"]', '7');
+    await c.click('#modal [data-action="save-item"]', 80);
+    await c.click('[data-action="edit-item"][data-id="s4"]', 60);
+    await c.set('#modal [data-m="draft.aisle"]', '12');
+    await c.click('#modal [data-action="save-item"]', 80);
+    const milk = (await c.all('ingredients')).find(i => i.id === 'milk');
+    t.eq('Kalamunda\'s aisle is saved beside Mundaring\'s', [milk.aisle, milk.aisles], ['2', { Kalamunda: '7' }]);
+    t.eq('Mapped items sort into Kalamunda\'s aisles', heads('Supermarket'), ['Aisle 7', 'Aisle 12', 'Not mapped at Kalamunda yet']);
+    t.eq('…and a hand-added item keeps both too', (await c.all('shoppingItems')).filter(i => i.id === 's4').map(i => [i.aisle, i.aisles]), [['9', { Kalamunda: '12' }]]);
+
+    await c.set('[data-shop-at="Supermarket"]', 'Mundaring');
+    t.eq('Back at Mundaring, its aisles are untouched', heads('Supermarket'), ['Aisle 2', 'Aisle 3', 'Aisle 9']);
+    t.eq('The Butcher never changed', heads('Butcher'), ['Meat']);
+  });
+
   scenario('A meal card holding only extra food (crash fixed in 2.0.2)', async (c, t) => {
     await c.importJson(patch({ recipes: [mk('tea', { name: 'Tea', servings: 1, proteinPerServingG: 1, lactose: 'none', tags: [], method: '', ingredients: [] })] }));
     await c.go(c.w.__mp.today());
