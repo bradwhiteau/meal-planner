@@ -54,6 +54,9 @@ Google will warn that the app isn't verified (it's your own, in Testing mode): t
   The Larder keeps each flavour separately, and any of them makes the recipe: eating takes from the flavour with the
   least left, and the eaten meal shows which, with a choice to change it. On the shopping list, the **$** sheet says
   which flavour you bought (a new one joins the list) and it's remembered for next time.
+- **Use by / best before:** optional dates on a larder row (tap it to set them). Within 3 days of either, or past best
+  before, the row shows in bold amber; past use by, bold red. The location heading shows a ⚠, and the Meal Planner Now
+  doc lists them under "Use soon or check".
 - **Larder tab:** **+ Add to larder**, **🍲 + Prepared meal**, **Baked sourdough** and **Collected eggs** sit at the top. Below, each location (Fridge, Freezer, Pantry Shelf 1…; edit the list in Settings) folds open and closed, showing its 🍲 meals and item count, with ⚠ if something inside needs eating or freezing. **Search the larder** (under the buttons) shows only
   the items whose name matches, and only the locations that have one. It works by itself:
   ticking a bought item on the Shop tab adds it, and tapping **Eaten** on a meal you cooked takes that recipe's ingredients out

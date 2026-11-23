@@ -11,7 +11,7 @@ Data lives on his phone (IndexedDB); Google Drive is a mailbox to Claude (see DA
    only): its own database `meal-planner-test`, its own `mpt.` storage keys, no service worker, Google Drive faked.
    It never touches real data.
 2. **Every bug gets a test.** Add a scenario or check to `tests/suite.js` that fails without the fix (try it: put the bug
-   back, see red, restore). Named scenarios so far: Pack sizes, Bolognese, Tuna mornay, Bulgogi, Cook once eat twice, Bulgogi night before, Ice cream, Shake and eggs, Kitty litter, One list, Pepsi Max, Off-plan cook, Extras-only meal card, Store folds, Two Woolworths, Flavours, Import rules,
+   back, see red, restore). Named scenarios so far: Pack sizes, Bolognese, Tuna mornay, Bulgogi, Cook once eat twice, Bulgogi night before, Ice cream, Shake and eggs, Kitty litter, One list, Pepsi Max, Off-plan cook, Extras-only meal card, Store folds, Two Woolworths, Flavours, Use by, Import rules,
    Drive mailbox, View-only, Protein summary.
 3. **Bump `APP_VERSION`** in app.js (shown in Settings → Data) and **`CACHE`** in sw.js, or phones keep the old version.
 4. Check nothing private is staged: no Drive folder IDs, tokens or personal data (the OAuth client ID in config.js is
@@ -25,4 +25,5 @@ Data lives on his phone (IndexedDB); Google Drive is a mailbox to Claude (see DA
 - When testing locally by hand, an old service worker can serve stale files: unregister it and clear caches first
   (the test page does this itself).
 - Data changes from Claude go through inbox patch files (DATA.md), never by editing Brad's data directly.
+- Screens and wording follow `STYLE.md` (sheet layout, colours, words). Read it before changing any UI.
 - Planning a week of meals: follow `meal-planner-data/PLANNING.md` on Drive (kept out of the repo: it holds Brad's preferences).

@@ -2,6 +2,15 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.19.0
+
+- **Use by and best before:** tap a larder item to give it either date. Within 3 days of either, or past best before,
+  it shows in bold amber; past its use-by date, bold red. The location's heading shows a ⚠ (red if anything is past
+  use by), and the Meal Planner Now doc lists them under "Use soon or check". Moving stock keeps its dates.
+- **Tidier sheets:** every sheet now has one big button (Save), with Remove or Delete as red text at the bottom left and
+  Cancel at the bottom right. Edit ingredient and Edit recipe are a ✎ beside the title; Move… sits beside Location. Help
+  text is down to one short line. The rules are written up in STYLE.md.
+
 ## 2.18.0
 
 - **Flavours:** give an ingredient flavours (Edit ingredient → **Flavours**, one per line, e.g. WPI: Chocolate, Vanilla)

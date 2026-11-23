@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.18.0';
+  const APP_VERSION = '2.19.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -608,13 +608,38 @@
     if (!ing || !f || flavoursOf(ing).some(x => x.toLowerCase() === f.toLowerCase())) return;
     ing.flavours = [...flavoursOf(ing), f]; put('ingredients', ing);
   }
+  // Use by and best before: optional dates on a Larder row (entered by hand on the larder sheet). Within DATE_SOON days
+  // of either, or past best before, the row shows amber; past use by, red. Stock moved or merged keeps the earlier date.
+  const DATE_SOON = 3;
+  const isYmd = v => isStr(v) && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const datesOf = p => { const o = {}; if (p && isYmd(p.useBy)) o.useBy = p.useBy; if (p && isYmd(p.bestBefore)) o.bestBefore = p.bestBefore; return o; };
+  function mergeDates(p, d) {
+    for (const k of ['useBy', 'bestBefore']) if (d && isYmd(d[k]) && !(isYmd(p[k]) && p[k] <= d[k])) p[k] = d[k];
+  }
+  // { level: '' | 'warn' | 'bad', text } for a Larder row: what the dates say, today.
+  function dateState(p) {
+    const parts = [], lv = [], days = v => Math.round((parseYmd(v) - parseYmd(ui.today)) / 86400000);
+    const when = (v, n) => (n === 0 ? 'today' : n === 1 ? 'tomorrow' : fmtDate(v));
+    if (isYmd(p.useBy)) {
+      const n = days(p.useBy);
+      parts.push(n < 0 ? `use by ${fmtDate(p.useBy)} (passed)` : `use by ${when(p.useBy, n)}`);
+      lv.push(n < 0 ? 'bad' : n <= DATE_SOON ? 'warn' : '');
+    }
+    if (isYmd(p.bestBefore)) {
+      const n = days(p.bestBefore);
+      parts.push(n < 0 ? `best before ${fmtDate(p.bestBefore)} (passed)` : `best before ${when(p.bestBefore, n)}`);
+      lv.push(n <= DATE_SOON ? 'warn' : '');
+    }
+    return { level: lv.includes('bad') ? 'bad' : lv.includes('warn') ? 'warn' : '', text: parts.join(' · ') };
+  }
+  const dateFlag = p => !isPortion(p) && Number(p.qty) > 0 && dateState(p).level;
   // Adds stock to a location: the one given, else the ingredient's usual spot, else wherever it already is.
-  function pantryAdd(ingredientId, qty, unit, location, flavour = '') {
+  function pantryAdd(ingredientId, qty, unit, location, flavour = '', dates) {
     const ing = byId('ingredients', ingredientId) || {}, rows = larderRows(ingredientId, unit);
     const loc = location != null ? location : (ing.location || (rows[0] ? locOf(rows[0]) : ''));
     const p = rows.find(x => locOf(x) === loc && flv(x) === (flavour || ''));
-    if (p) { p.qty = round(Math.max(0, (Number(p.qty) || 0) + norm(qty, unit).qty / norm(1, p.unit).qty), 3); put('pantryItems', p); }
-    else if (qty > 0) put('pantryItems', { ingredientId, qty: round(qty, 3), unit, location: loc, ...(flavour ? { flavour } : {}) });
+    if (p) { p.qty = round(Math.max(0, (Number(p.qty) || 0) + norm(qty, unit).qty / norm(1, p.unit).qty), 3); mergeDates(p, dates); put('pantryItems', p); }
+    else if (qty > 0) put('pantryItems', { ingredientId, qty: round(qty, 3), unit, location: loc, ...(flavour ? { flavour } : {}), ...datesOf(dates) });
   }
   // Takes up to qty out (never below zero). With a flavour, that flavour first; without, the flavour with the least
   // left first (finish the open bag). Then `prefer` (a location) if given, then fridge first. Returns what was taken
@@ -830,7 +855,7 @@
       if (!(t > 0)) continue;
       p.qty = round((have - t) / per, 3); put('pantryItems', p);
       left -= t; moved += t;
-      pantryAdd(ingredientId, round(t, 3), norm(1, unit).unit, fridgeLoc(), flv(p));
+      pantryAdd(ingredientId, round(t, 3), norm(1, unit).unit, fridgeLoc(), flv(p), datesOf(p));
     }
     return round(moved, 3);
   }
@@ -1001,6 +1026,7 @@
       if (r.location != null && !isStr(r.location)) delete r.location;
       if (r.cookedOn != null && !(isStr(r.cookedOn) && /^\d{4}-\d{2}-\d{2}$/.test(r.cookedOn))) delete r.cookedOn;
       if (r.flavour != null && !(isStr(r.flavour) && r.flavour.trim())) delete r.flavour;
+      for (const k of ['useBy', 'bestBefore']) if (r[k] != null && !isYmd(r[k])) delete r[k];
       return true;
     },
     mealLogs: r => {
@@ -1432,6 +1458,8 @@
       const keep = x => { const ing = byId('ingredients', x.ingredientId); return keepOf(ing) ? ` (${e(keepLabel(ing))}${keepLow(x.ingredientId) ? ', below it' : ''})` : ''; };
       if (rows.length) out.push(`<h3>${e(loc || 'No location')}</h3><p>${rows.map(x => `${e(ingName(x.ingredientId))} ${e(fmtQty(Number(x.qty), x.unit))}${keep(x)}`).join('; ')}.</p>`);
     }
+    const dated = stocked.filter(dateFlag).sort((a, b) => (dateFlag(a) === 'bad' ? 0 : 1) - (dateFlag(b) === 'bad' ? 0 : 1));
+    if (dated.length) out.push(`<h3>Use soon or check</h3><ul>${dated.map(x => `<li>${e(ingName(x.ingredientId))}${flv(x) ? ` (${e(flv(x))})` : ''}, ${e(locOf(x) || 'no location')}: ${e(dateState(x).text)}</li>`).join('')}</ul>`);
     const out0 = S.pantryItems.filter(x => !isPortion(x) && !(Number(x.qty) > 0)).map(x => ingName(x.ingredientId)).sort();
     if (out0.length) out.push(`<h3>Run out</h3><p>${out0.map(e).join(', ')}.</p>`);
     return `<html><head><meta charset="utf-8"></head><body>${out.join('\n')}</body></html>`;
@@ -1937,8 +1965,9 @@
     const when = p.updatedAt ? fmtDate(ymd(new Date(p.updatedAt))) : '', ing = byId('ingredients', p.ingredientId);
     const min = keepOf(ing) ? `<small class="min ${keepLow(p.ingredientId) ? 'warn-text' : ''}">Min: ${esc(fmtQty(Number(ing.keepQty), ing.keepUnit))}</small>` : '';
     const fl = flavoursOf(ing).length ? `<span class="flavour">${flv(p) ? esc(flv(p)) : 'flavour not set'}</span>` : '';
-    return `<div class="pantry-row ${Number(p.qty) > 0 ? '' : 'out'}" data-name="${esc((ingName(p.ingredientId) + ' ' + flv(p)).toLowerCase())}"><button class="grow larder-name" data-action="edit-pantry" data-id="${p.id}">
-        ${esc(ingName(p.ingredientId))}${fl}${when ? `<span class="sub">changed ${when}</span>` : ''}</button>
+    const ds = dateState(p), dflag = Number(p.qty) > 0 ? ds.level : '';
+    return `<div class="pantry-row ${Number(p.qty) > 0 ? '' : 'out'}${dflag ? ' date-' + dflag : ''}" data-name="${esc((ingName(p.ingredientId) + ' ' + flv(p)).toLowerCase())}"><button class="grow larder-name" data-action="edit-pantry" data-id="${p.id}">
+        ${esc(ingName(p.ingredientId))}${fl}${ds.text ? `<span class="sub dates">${esc(ds.text)}</span>` : ''}${when ? `<span class="sub">changed ${when}</span>` : ''}</button>
       <span class="stepper stacked"><button class="qty" data-action="edit-pantry" data-id="${p.id}">${esc(fmtQty(Number(p.qty) || 0, p.unit))}${min}</button>
       <button class="edit-only plus" data-action="pantry-step" data-id="${p.id}" data-d="${step}" aria-label="More">+</button>
       <button class="edit-only minus" data-action="pantry-step" data-id="${p.id}" data-d="${-step}" aria-label="Less">−</button></span></div>`;
@@ -1978,7 +2007,8 @@
         .sort((a, b) => String(a.cookedOn || '').localeCompare(String(b.cookedOn || '')) || mealName(a).localeCompare(mealName(b)));
       const rows = stocked.filter(p => locOf(p) === loc).sort(byName);
       if (!rows.length && !here.length) continue;
-      const due = here.some(useByDue), key = loc || '~none';
+      const flags = rows.map(dateFlag), due = here.some(useByDue) || flags.some(Boolean), key = loc || '~none';
+      const dueCls = flags.includes('bad') ? 'fail-text' : 'warn-text';
       if (q) {
         const mh = here.filter(hit), rh = rows.filter(hit);
         if (!mh.length && !rh.length) continue;
@@ -1990,7 +2020,7 @@
       }
       html += `<details class="larder-loc" data-loc="${esc(key)}" ${open.includes(key) ? 'open' : ''}>
         <summary><span class="loc-name">${esc(loc || 'No location')}</span>
-          <span class="muted">${due ? '<span class="warn-text" title="Something here needs eating or freezing">⚠</span> ' : ''}${here.length ? `🍲${here.length} · ` : ''}${here.length + rows.length}</span></summary>
+          <span class="muted">${due ? `<span class="${dueCls}" title="Something here needs eating, freezing or checking">⚠</span> ` : ''}${here.length ? `🍲${here.length} · ` : ''}${here.length + rows.length}</span></summary>
         <div class="larder-list">${here.map(mealRow).join('')}${rows.map(larderRow).join('')}</div></details>`;
     }
     html += '</div>';
@@ -2123,7 +2153,16 @@
   }
   function openModal(m) { ui.modal = m; renderModal(); }
   function closeModal() { ui.modal = null; render(); }
-  const cancelBtn = (label = 'Cancel') => `<button class="btn ghost" data-action="close-modal">${label}</button>`;
+  // Sheet layout (STYLE.md): title (✎ beside it edits the thing itself), fields, at most one short hint line, then one
+  // big primary button and a quiet footer: a red delete-type action on the left, Cancel (and any other text action) on the right.
+  const cancelBtn = (label = 'Cancel') => `<button class="link quiet" data-action="close-modal">${label}</button>`;
+  const hint = text => `<p class="hint">${text}</p>`;
+  const delLink = (action, label, attrs = '') => `<button class="link danger" data-action="${action}" ${attrs}>${label}</button>`;
+  const editIcon = (action, id) => `<button class="icon-btn edit-only" data-action="${action}" data-id="${esc(id)}" aria-label="Edit">✎</button>`;
+  const sheetFoot = (action, label, { del = '', links = '' } = {}) => `<button class="btn primary wide sheet-save" data-action="${action}">${label}</button>
+    <div class="sheet-foot"><span>${del}</span><span class="foot-end">${links}${cancelBtn()}</span></div>`;
+  // A field with a small text action beside its label ("Location … Move…").
+  const fieldWith = (label, action, inner) => `<div class="field"><span class="field-head">${label}${action}</span>${inner}</div>`;
 
   const MODALS = {
     menu() {
@@ -2132,7 +2171,7 @@
         <button class="btn wide" data-action="export">⬇ Export data</button>
         <label class="btn wide edit-only">⬆ Import data<input type="file" accept="application/json,.json" data-change="import" hidden></label>
         <button class="btn wide" data-action="view" data-view="ingredients">Ingredients</button>
-        ${cancelBtn('Close')}</div>`;
+        <div class="sheet-foot"><span></span>${cancelBtn('Close')}</div></div>`;
     },
     slot(m) {
       const plan = viewPlan(ui.week), day = plan.days[m.day];
@@ -2145,24 +2184,23 @@
           + (r ? `<p>${lactoseBadge(r)} <span class="muted">${r.proteinPerServingG != null ? r.proteinPerServingG + ' g protein per serving' : 'Protein not set yet'} · recipe makes ${r.servings}</span></p>` : '')
           + `<div class="row">${field('Servings eaten', `<input type="number" inputmode="decimal" step="0.5" min="0.5" data-m="servings" data-type="num" value="${esc(m.servings)}">`)}
             ${field('Servings to cook', `<input type="number" inputmode="decimal" step="1" min="1" data-m="cook" data-type="num" value="${esc(m.cook == null ? '' : m.cook)}" placeholder="${r ? autoCook(m, r) : ''}">`)}</div>
-            <p class="muted">Leave blank to cook this meal, its Leftovers, and this recipe's lunches and dinners in the next few days (batch recipes: as far as the plan goes). Type a number to cook exactly that. The shopping list buys for the servings cooked.</p>`;
+            ${hint('Blank cooks what the plan needs (this meal, its leftovers, the next few days). A number cooks exactly that.')}`;
       } else if (m.mode === 'leftover') {
         body = sources.length ? field('Leftovers from', `<select data-m="src" data-rerender><option value="">Choose…</option>${sources.map(s => `<option value="${s.v}" ${s.v === m.src ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select>`)
           + field('Servings eaten', `<input type="number" inputmode="decimal" step="0.5" min="0.5" data-m="servings" data-type="num" value="${esc(m.servings)}">`)
           + `<label class="toggle"><input type="checkbox" data-m="freezer" ${m.freezer ? 'checked' : ''}> Coming from the freezer (reminds you the night before)</label>`
-          : `<p class="muted">Nothing earlier in this week to use. Plan the meal it comes from first.</p>`;
+          : hint('Nothing earlier this week to use. Plan the meal it comes from first.');
       } else if (m.mode === 'text') {
         body = field('What', `<input type="text" data-m="text" value="${esc(m.text)}" placeholder="e.g. Eating out, BBQ at Mum's">`)
           + field('Protein estimate (g, optional)', `<input type="number" inputmode="numeric" data-m="proteinG" data-type="num" value="${esc(m.proteinG == null ? '' : m.proteinG)}">`);
       }
       const adding = !m.item && itemsOf(day, m.slot).length > 0;
       return `<h2>${adding ? 'Add to ' : ''}${WEEKDAY[m.day]} ${SLOT_LABEL[m.slot].toLowerCase()} <span class="muted">${fmtDate(day.date)}</span></h2>
-        ${adding ? `<p class="muted">Already planned: ${itemsOf(day, m.slot).map(x => esc(resolveItem(plan, m.day, m.slot, x).label)).join(', ')}</p>` : ''}
+        ${adding ? hint(`Already planned: ${itemsOf(day, m.slot).map(x => esc(resolveItem(plan, m.day, m.slot, x).label)).join(', ')}`) : ''}
         <div class="seg" style="margin-top:12px">${[['recipe', 'Recipe'], ['leftover', 'Leftovers'], ['text', 'Free text']].map(([k, l]) =>
           `<button class="${m.mode === k ? 'on' : ''}" data-action="modal-pick" data-key="mode" data-value="${k}">${l}</button>`).join('')}</div>
         ${body}
-        <div class="row"><button class="btn primary" data-action="save-slot">Save</button>
-          ${m.item ? `<button class="btn danger" data-action="clear-slot">Remove</button>` : ''}${cancelBtn()}</div>`;
+        ${sheetFoot('save-slot', 'Save', { del: m.item ? delLink('clear-slot', 'Remove from plan') : '' })}`;
     },
     cook(m) {
       const r = byId('recipes', m.recipeId), rest = Math.max(0, m.made - m.eatNow);
@@ -2175,8 +2213,8 @@
         ${rest ? `<p class="muted">Where did the other ${rest} go?</p>
           ${Object.keys(m.alloc).map(loc => `<div class="cook-row"><span>${esc(loc)}</span>${step('loc', m.alloc[loc], loc)}</div>`).join('')}
           <p class="${placed === rest ? 'muted' : 'warn-text'}">${placed} of ${rest} put away</p>` : ''}
-        <p class="muted">The ingredients for ${m.made} come out of the larder; the portions put away go in.</p>
-        <div class="row"><button class="btn primary" data-action="save-cook">Save</button>${cancelBtn()}</div>`;
+        ${hint(`Ingredients for ${m.made} come out of the larder; portions put away go in.`)}
+        ${sheetFoot('save-cook', 'Save')}`;
     },
     portion(m) {
       const d = m.draft;
@@ -2184,10 +2222,10 @@
         ${field('Recipe', `<select data-m="draft.recipeId"><option value="">Choose…</option>${sortByName(S.recipes).map(r => `<option value="${r.id}" ${r.id === d.recipeId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select>`)}
         <div class="row">${field('Portions', `<input type="number" inputmode="decimal" step="1" min="0" data-m="draft.qty" data-type="num" value="${esc(d.qty == null ? '' : d.qty)}">`)}
           ${field('Cooked on', `<input type="date" data-m="draft.cookedOn" value="${esc(d.cookedOn || '')}">`)}</div>
-        <div class="row">${field('Location', locationSelect('draft.location', d.location || ''))}</div>
+        ${m.id ? fieldWith('Location', `<button class="link edit-only" data-action="move-open" data-id="${m.id}">Move…</button>`, locationSelect('draft.location', d.location || ''))
+          : field('Location', locationSelect('draft.location', d.location || ''))}
         ${m.id ? '' : `<label class="toggle"><input type="checkbox" data-m="justCooked" ${m.justCooked ? 'checked' : ''}> Just cooked it: take the ingredients out of the larder</label>`}
-        <div class="row"><button class="btn primary" data-action="save-portion">Save</button>
-          ${m.id ? `<button class="btn" data-action="move-open" data-id="${m.id}">Move</button><button class="btn danger" data-action="delete-portion">Remove</button>` : ''}${cancelBtn()}</div>`;
+        ${sheetFoot('save-portion', 'Save', { del: m.id ? delLink('delete-portion', 'Remove from larder') : '' })}`;
     },
     mealMenu(m) {
       const { plan, i } = locateDay(ui.date), sl = findItem(plan.days[i], m.slot, m.item), r = resolveItem(plan, i, m.slot, sl);
@@ -2202,7 +2240,7 @@
             return `<button class="btn wide" data-action="cook-ahead" ${at}>🍳 Cooked, eating later</button>`;
           })()}
           ${r && r.recipe ? `<button class="btn wide" data-action="show-recipe" data-id="${r.recipe.id}">Recipe</button>` : ''}
-          ${cancelBtn()}</div>`;
+          <div class="sheet-foot"><span></span>${cancelBtn()}</div></div>`;
     },
     log(m) {
       const r = m.mode === 'recipe' && m.recipeId && byId('recipes', m.recipeId);
@@ -2216,15 +2254,15 @@
         ${r ? `<p>${lactoseBadge(r)}</p>` : ''}
         <div class="row">${field('Servings', `<input type="number" inputmode="decimal" step="0.5" min="0.5" data-m="servings" data-type="num" value="${esc(m.servings)}">`)}
           ${needsProtein ? field(m.mode === 'text' ? 'Protein estimate (g)' : 'Protein per serving (g)', `<input type="number" inputmode="numeric" data-m="proteinG" data-type="num" value="${esc(m.proteinG == null ? '' : m.proteinG)}">`) : ''}</div>
-        ${r && needsProtein ? `<p class="muted">Saved to the recipe for next time.</p>` : ''}
-        <div class="row"><button class="btn primary" data-action="save-log">Log it</button>${cancelBtn()}</div>`;
+        ${r && needsProtein ? hint('Saved to the recipe for next time.') : ''}
+        ${sheetFoot('save-log', 'Log it')}`;
     },
     protein(m) {
       const r = byId('recipes', m.recipeId);
       return `<h2>Protein in ${esc(r.name)}</h2>
-        <p class="muted">Not set yet. Enter it once and it's saved to the recipe.</p>
         ${field('Protein per serving (g)', `<input type="number" inputmode="numeric" data-m="proteinG" data-type="num" id="f-focus">`)}
-        <div class="row"><button class="btn primary" data-action="save-protein">Save and log</button>${cancelBtn()}</div>`;
+        ${hint('Not set yet. Enter it once and it\'s saved to the recipe.')}
+        ${sheetFoot('save-protein', 'Save and log')}`;
     },
     recipe(m) {
       const d = m.draft;
@@ -2241,13 +2279,11 @@
             <input type="text" data-m="draft.ingredients.${i}.unit" value="${esc(x.unit)}" placeholder="g">
             <button class="x" data-action="del-ing" data-i="${i}" aria-label="Remove">✕</button></div>`).join('')}
           <button class="btn small" data-action="add-ing">+ Ingredient</button>
-          <p class="muted">Units: g, kg, ml, L, or anything else (each, tin, pack). New names create a new ingredient.</p></div>
+          ${hint('Units: g, kg, ml, L, or each, tin, pack. A new name makes a new ingredient.')}</div>
         ${field('Method', `<textarea rows="4" data-m="draft.method">${esc(d.method)}</textarea>`)}
-        ${field('Night before (optional)', `<input type="text" data-m="draft.nightBefore" value="${esc(d.nightBefore || '')}" placeholder="e.g. Cook the rice">`)}
-        <p class="muted">Shows in the evening prep the day before this recipe is cooked. Frozen ingredients get their own "take it out" reminder.</p>
-        <label class="toggle"><input type="checkbox" data-m="draft.eatFrozen" ${d.eatFrozen ? 'checked' : ''}> Eaten from frozen (portions stay in the freezer, no move-to-fridge reminder)</label>
-        <div class="row"><button class="btn primary" data-action="save-recipe">Save</button>
-          ${m.id ? `<button class="btn danger" data-action="delete-recipe">Delete</button>` : ''}${cancelBtn()}</div>`;
+        ${field('Night-before prep (optional)', `<input type="text" data-m="draft.nightBefore" value="${esc(d.nightBefore || '')}" placeholder="e.g. Cook the rice">`)}
+        <label class="toggle"><input type="checkbox" data-m="draft.eatFrozen" ${d.eatFrozen ? 'checked' : ''}> Eaten from frozen (portions stay in the freezer)</label>
+        ${sheetFoot('save-recipe', 'Save', { del: m.id ? delLink('delete-recipe', 'Delete recipe') : '' })}`;
     },
     ingredient(m) {
       const d = m.draft, pack = Number(d.packQty) > 0;
@@ -2261,13 +2297,12 @@
           ${field('Pack unit', `<input type="text" data-m="draft.packUnit" value="${esc(d.packUnit || '')}" placeholder="kg">`)}
           ${pack ? field('Price per pack ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.packPrice" data-type="num" value="${esc(d.packPrice == null ? '' : d.packPrice)}">`)
             : field('Last price ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.lastPrice" data-type="num" value="${esc(d.lastPrice == null ? '' : d.lastPrice)}">`)}</div>
+        ${hint('With a pack size, the list buys whole packs.')}
         <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local (bought from a local producer)</label>
         <label class="toggle"><input type="checkbox" data-m="draft.cookFromFrozen" ${d.cookFromFrozen ? 'checked' : ''}> Cook from frozen (no reminder to thaw it)</label>
-        <p class="muted">With a pack size, the shopping list buys whole packs and prices them per pack.</p>
         ${field('Flavours (optional, one per line)', `<textarea rows="3" data-m="draft.flavoursText" placeholder="Chocolate&#10;Vanilla">${esc(d.flavoursText || '')}</textarea>`)}
-        <p class="muted">With flavours, the larder keeps each one separately and recipes use any of them.</p>
-        <div class="row"><button class="btn primary" data-action="save-ingredient">Save</button>
-          <button class="btn danger" data-action="delete-ingredient">Delete</button>${cancelBtn()}</div>`;
+        ${hint('The larder keeps each flavour separately; recipes use any of them.')}
+        ${sheetFoot('save-ingredient', 'Save', { del: delLink('delete-ingredient', 'Delete ingredient') })}`;
     },
     item(m) {
       const d = m.draft, ing = d.ingredientId && byId('ingredients', d.ingredientId);
@@ -2280,12 +2315,11 @@
           <div class="row">${field('Store', storeSelect('draft.store', d.store))}
             ${field(aisleField(d.store), `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
           <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local</label>
-          <p class="muted">An item that matches an ingredient's name goes into the larder when ticked.</p>
-          <div class="row"><button class="btn primary" data-action="save-item">Save</button>
-            ${m.id ? `<button class="btn danger" data-action="delete-item">Remove</button>` : ''}${cancelBtn()}</div>`;
+          ${hint('If it matches an ingredient, ticking puts it in the larder.')}
+          ${sheetFoot('save-item', 'Save', { del: m.id ? delLink('delete-item', 'Remove from list') : '' })}`;
       }
       const gross = Number(d.needGross) > 0 ? d.needGross : d.qty;
-      return `<h2>${esc(ing.name)}</h2>
+      return `<h2>${esc(ing.name)} ${editIcon('edit-ingredient', ing.id)}</h2>
         <p class="muted">Need ${esc(fmtQty(gross, d.unit))}${Number(d.larderQty) > 0 ? ` · ${esc(fmtQty(d.larderQty, d.unit))} already in the larder` : ''}${d.forRecipes ? ` · for ${esc(d.forRecipes)}` : ''}</p>
         <div class="row">${field('Pack size', `<input type="number" inputmode="decimal" data-m="draft.packQty" data-type="num" value="${esc(d.packQty == null ? '' : d.packQty)}" placeholder="e.g. 1">`)}
           ${field('Pack unit', `<input type="text" data-m="draft.packUnit" value="${esc(d.packUnit || '')}" placeholder="kg">`)}</div>
@@ -2297,30 +2331,29 @@
         <div class="row">${field('Larder location', locationSelect('draft.location', d.location || ''))}
           ${flavoursOf(ing).length ? field('Flavour', `<input type="text" data-suggest="flavour" data-m="draft.flavour" value="${esc(d.flavour || '')}" placeholder="e.g. Chocolate">`) : ''}</div>
         <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local</label>
-        <p class="muted">Price is what this line cost. Pack size, price, store, aisle and location are saved to the ingredient, so future lists buy whole packs at the right price. Ticking puts what you bought in the larder.</p>
-        <div class="row"><button class="btn primary" data-action="save-item">Save</button>${cancelBtn()}</div>`;
+        ${hint('Price is what this line cost. The rest is saved to the ingredient for future lists.')}
+        ${sheetFoot('save-item', 'Save')}`;
     },
     pantry(m) {
       const d = m.draft;
-      return `<h2>${m.id ? esc(ingName(d.ingredientId)) : 'Add to larder'}</h2>
+      return `<h2>${m.id ? `${esc(ingName(d.ingredientId))} ${editIcon('edit-ingredient', d.ingredientId)}` : 'Add to larder'}</h2>
         ${m.id ? '' : field('Item', `<input type="text" data-suggest="ing" data-m="draft.name" data-rerender value="${esc(d.name)}" placeholder="e.g. Rolled oats">`)}
         <div class="row">${field('Amount on hand', `<input type="number" inputmode="decimal" data-m="draft.qty" data-type="num" value="${esc(d.qty == null ? '' : d.qty)}">`)}
           ${field('Unit', unitSelect('draft.unit', m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || ''), d.unit))}</div>
-        <div class="row">${field('Location', locationSelect('draft.location', d.location || ''))}
+        <div class="row">${m.id ? fieldWith('Location', `<button class="link edit-only" data-action="move-open" data-id="${m.id}">Move…</button>`, locationSelect('draft.location', d.location || ''))
+            : field('Location', locationSelect('draft.location', d.location || ''))}
           ${flavoursOf(m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || '')).length ? field('Flavour', `<input type="text" data-suggest="flavour" data-m="draft.flavour" value="${esc(d.flavour || '')}" placeholder="e.g. Chocolate">`) : ''}</div>
+        <div class="row">${field('Use by', `<input type="date" data-m="draft.useBy" value="${esc(d.useBy || '')}">`)}
+          ${field('Best before', `<input type="date" data-m="draft.bestBefore" value="${esc(d.bestBefore || '')}">`)}</div>
         <div class="row">${field('Keep at least', `<input type="number" inputmode="decimal" data-m="draft.keepQty" data-type="num" value="${esc(d.keepQty == null ? '' : d.keepQty)}" placeholder="no minimum">`)}
           ${field('Unit', unitSelect('draft.keepUnit', m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || ''), d.keepUnit || d.unit))}</div>
-        <p class="muted">Keep at least: counted across every location. When what's left after the week's meals would drop below it, the shopping list tops it up.</p>
-        <div class="row"><button class="btn primary" data-action="save-pantry">Save</button>
-          ${m.id ? `<button class="btn" data-action="move-open" data-id="${m.id}">Move</button>` : ''}${cancelBtn()}</div>
-        ${m.id ? `<div class="row"><button class="btn" data-action="edit-ingredient" data-id="${esc(d.ingredientId)}">Edit ingredient</button>
-          <button class="btn danger" data-action="delete-pantry">Remove from larder</button></div>
-        <p class="muted">Edit ingredient: rename it, or change its store, aisle or pack size. Recipes and the shopping list follow.</p>` : ''}`;
+        ${hint('Across all locations. Tops up the shopping list.')}
+        ${sheetFoot('save-pantry', 'Save', { del: m.id ? delLink('delete-pantry', 'Remove from larder') : '' })}`;
     },
     // Moving some (or all) of a Larder row to another location: how many, then tap where it goes.
     move(m) {
       const x = byId('pantryItems', m.id);
-      if (!x) return `<h2>Not in the larder any more</h2><div class="row">${cancelBtn('Close')}</div>`;
+      if (!x) return `<h2>Not in the larder any more</h2><div class="sheet-foot"><span></span>${cancelBtn('Close')}</div>`;
       const name = isPortion(x) ? (byId('recipes', x.recipeId) || {}).name || 'Prepared meal' : ingName(x.ingredientId);
       const unit = isPortion(x) ? (Number(x.qty) === 1 ? 'portion' : 'portions') : x.unit, from = locOf(x);
       const to = settings.locations.filter(l => l !== from);
@@ -2333,25 +2366,25 @@
         <div class="row"><button class="btn small ghost" data-action="move-all">All ${esc(fmtQty(Number(x.qty), unit))}</button></div>
         <p class="muted">Move to:</p>
         <div class="grid2">${to.map(l => `<button class="btn" data-action="move-to" data-loc="${esc(l)}">${esc(l)}</button>`).join('')}</div>
-        <div class="row">${cancelBtn()}</div>`;
+        <div class="sheet-foot"><span></span>${cancelBtn()}</div>`;
     },
     eggs() {
-      return `<h2>Eggs collected</h2><div class="grid4">${[1, 2, 3, 4, 5, 6, 8, 12].map(n => `<button class="btn" data-action="add-eggs" data-n="${n}">${n}</button>`).join('')}</div>${cancelBtn()}`;
+      return `<h2>Eggs collected</h2><div class="grid4">${[1, 2, 3, 4, 5, 6, 8, 12].map(n => `<button class="btn" data-action="add-eggs" data-n="${n}">${n}</button>`).join('')}</div><div class="sheet-foot"><span></span>${cancelBtn()}</div>`;
     },
     templates() {
       const list = templates();
       return `<h2>Use a template</h2><p class="muted">Replaces the week of ${fmtDate(ui.week)}.</p>
         ${list.length ? list.map(t => `<div class="row" style="align-items:center"><button class="btn" style="flex:3" data-action="apply-template" data-id="${t.id}">${esc(t.templateName)}</button>
           <button class="btn ghost danger" data-action="delete-template" data-id="${t.id}">Delete</button></div>`).join('') : '<p>No templates yet. Plan a week, then Save as template.</p>'}
-        <div class="row">${cancelBtn()}</div>`;
+        <div class="sheet-foot"><span></span>${cancelBtn()}</div>`;
     },
     recipeView(m) {
       const r = byId('recipes', m.id);
-      if (!r) return `<h2>Recipe not found</h2><div class="row">${cancelBtn('Close')}</div>`;
+      if (!r) return `<h2>Recipe not found</h2><div class="sheet-foot"><span></span>${cancelBtn('Close')}</div>`;
       const cook = m.cook > 1 ? m.cook : 0;
       // The right-hand column scales to however many serves you type in; it starts at the planned cook.
       if (m.scale === undefined) m.scale = cook || r.servings || 1;
-      return `<h2>${esc(r.name)}</h2>
+      return `<h2>${esc(r.name)} ${editIcon('edit-recipe', r.id)}</h2>
         <p>${lactoseBadge(r)} <span class="muted">${r.proteinPerServingG != null ? `${r.proteinPerServingG} g protein per serve` : ''}${r.tags.length ? (r.proteinPerServingG != null ? ' · ' : '') + esc(r.tags.join(', ')) : ''}</span></p>
         ${cook ? `<p class="cook-head"><b>Cooking ${cook} serves</b>${m.why ? `<br><span class="muted">${esc(m.why)}</span>` : ''}</p>` : ''}
         <h3>Ingredients</h3>
@@ -2360,11 +2393,11 @@
           <tbody>${r.ingredients.map((x, i) => `<tr><td>${esc(ingName(x.ingredientId))}</td><td>${recipeAmt(r, x, 1)}</td><td class="scaled" data-i="${i}"><b>${recipeAmt(r, x, m.scale)}</b></td></tr>`).join('')}</tbody></table>
         ${r.nightBefore ? `<p><b>Night before:</b> ${esc(r.nightBefore)}</p>` : ''}
         ${r.method ? `<h3>Method</h3><p class="method">${esc(r.method)}</p>` : ''}
-        <div class="row"><button class="btn edit-only" data-action="edit-recipe" data-id="${r.id}">Edit</button>${cancelBtn('Close')}</div>`;
+        <div class="sheet-foot"><span></span>${cancelBtn('Close')}</div>`;
     },
     inbox() {
       const items = drive.pending;
-      if (!items.length) return `<h2>Inbox</h2><p>Nothing new from Claude.</p><div class="row">${cancelBtn('Close')}</div>`;
+      if (!items.length) return `<h2>Inbox</h2><p>Nothing new from Claude.</p><div class="sheet-foot"><span></span>${cancelBtn('Close')}</div>`;
       return `<h2>Inbox</h2><p class="muted">Changes from Claude. Applying never overwrites anything changed more recently on this phone.</p>
         ${items.map((it, i) => `<div class="card">
           <div class="sub">${esc(it.file.name)}${it.inc && it.inc.author ? ` · from ${esc(it.inc.author)}` : ''}</div>
@@ -2372,13 +2405,13 @@
             : `${it.inc.note ? `<p><b>${esc(it.inc.note)}</b></p>` : `<p><b>${it.inc.kind === 'patch' ? 'Patch' : 'Full export'}</b></p>`}<p class="muted">${esc(it.plan.summary)}</p>`}
           <div class="row">${it.error ? '' : `<button class="btn primary" data-action="inbox-apply" data-i="${i}">${it.plan.changes ? 'Apply' : 'Mark as done'}</button>`}
             <button class="btn" data-action="inbox-skip" data-i="${i}">Skip</button></div></div>`).join('')}
-        <div class="row">${cancelBtn('Close')}</div>`;
+        <div class="sheet-foot"><span></span>${cancelBtn('Close')}</div>`;
     },
     saveTemplate(m) {
       return `<h2>Save week as template</h2>
         ${field('Name', `<input type="text" data-m="name" value="${esc(m.name)}" placeholder="e.g. Standard week">`)}
-        <p class="muted">A template with the same name is replaced.</p>
-        <div class="row"><button class="btn primary" data-action="save-template-ok">Save</button>${cancelBtn()}</div>`;
+        ${hint('A template with the same name is replaced.')}
+        ${sheetFoot('save-template-ok', 'Save')}`;
     },
   };
 
@@ -2773,10 +2806,11 @@
         const same = S.pantryItems.find(x => x !== p && x.ingredientId === p.ingredientId && locOf(x) === loc && flv(x) === f && norm(1, x.unit).unit === norm(1, d.unit || p.unit).unit);
         if (same && (loc !== locOf(p) || f !== flv(p))) {        // moved (or relabelled) to a row that's already there: merge
           same.qty = round((Number(same.qty) || 0) + norm(Number(d.qty) || 0, d.unit || p.unit).qty / norm(1, same.unit).qty, 3);
-          put('pantryItems', same); remove('pantryItems', p.id);
+          mergeDates(same, d); put('pantryItems', same); remove('pantryItems', p.id);
         } else {
           Object.assign(p, { qty: d.qty || 0, unit: d.unit, location: loc });
           if (f) p.flavour = f; else delete p.flavour;
+          for (const k of ['useBy', 'bestBefore']) if (isYmd(d[k])) p[k] = d[k]; else delete p[k];
           put('pantryItems', p);
         }
         addFlavour(byId('ingredients', p.ingredientId), f);
@@ -2790,7 +2824,7 @@
       const unit = d.unit || ing.defaultUnit || 'each';
       if (d.location && !ing.location) { ing.location = d.location; put('ingredients', ing); }
       const f = flavoursOf(ing).length ? String(d.flavour || '').trim() : '';
-      pantryAdd(ing.id, d.qty || 0, unit, d.location || ing.location || '', f);
+      pantryAdd(ing.id, d.qty || 0, unit, d.location || ing.location || '', f, datesOf(d));
       addFlavour(ing, f);
       setKeep(ing, d);
       closeModal();
@@ -2817,7 +2851,7 @@
         // Joins the row already there, if any. A row moved in full goes, rather than staying as "run out".
         const unit = x.unit;
         if (n >= have) remove('pantryItems', x.id); else { x.qty = round(have - n, 3); put('pantryItems', x); }
-        pantryAdd(x.ingredientId, n, unit, to, flv(x));
+        pantryAdd(x.ingredientId, n, unit, to, flv(x), datesOf(x));
       }
       closeModal();
       toast(`Moved ${fmtQty(n, isPortion(x) ? (n === 1 ? 'portion' : 'portions') : x.unit)} to ${to}`);

@@ -377,3 +377,23 @@ body.viewer .stepper.stacked .qty { grid-row: auto; }
 .larder-name .flavour { display: block; font-size: .85rem; color: var(--muted); }
 .flavour-pick { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; margin-top: 4px; }
 .flavour-pick select { width: auto; padding: 2px 6px; font-size: .85rem; }
+
+/* Sheets (STYLE.md): one big primary button, then a quiet footer of text actions. */
+.sheet-save { margin-top: 16px; }
+.sheet-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 4px; }
+.sheet-foot .foot-end { display: flex; gap: 12px; margin-left: auto; }
+.sheet-foot .link, .link.quiet { text-decoration: none; font: inherit; font-size: .95rem; min-height: 40px; padding: 8px 4px; cursor: pointer; }
+.link.quiet { color: var(--muted); }
+.hint { color: var(--muted); font-size: .85rem; margin: -4px 0 8px; }
+.field-head { display: flex !important; justify-content: space-between; align-items: baseline; }
+.field-head .link { font-size: .88rem; text-decoration: none; padding: 0 4px; cursor: pointer; }
+.icon-btn { background: none; border: 0; color: var(--muted); font-size: 1.05rem; padding: 2px 6px; margin-left: 2px; cursor: pointer; vertical-align: middle; }
+.icon-btn:hover { color: var(--accent); }
+.fail-text { color: var(--fail); }
+
+/* Use by / best before on a larder row: amber when close (or past best before), red past use by. */
+.pantry-row.date-warn .larder-name { color: var(--warn); font-weight: 700; }
+.pantry-row.date-bad .larder-name { color: var(--fail); font-weight: 700; }
+.larder-name .sub.dates { font-weight: 600; }
+.pantry-row.date-warn .sub.dates { color: var(--warn); }
+.pantry-row.date-bad .sub.dates { color: var(--fail); }

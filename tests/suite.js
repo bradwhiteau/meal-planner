@@ -1096,6 +1096,54 @@
     t.eq('…and saves them from there', wpi.flavours, ['Chocolate', 'Vanilla']);
   });
 
+  scenario('Use by: dates on larder stock, amber when close, red past use-by (2.19.0)', async (c, t) => {
+    const off = n => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() + n); return ymd(d); };
+    await c.importJson(patch({
+      ingredients: ['milk', 'chicken', 'rice', 'oats', 'jam'].map(id => mk(id, { name: id[0].toUpperCase() + id.slice(1), defaultUnit: 'g', store: 'Supermarket', aisle: '1' })),
+      pantryItems: [mk('p-milk', { ingredientId: 'milk', qty: 1000, unit: 'g', location: 'Fridge', useBy: off(2) }),
+        mk('p-chicken', { ingredientId: 'chicken', qty: 500, unit: 'g', location: 'Fridge', useBy: off(-1) }),
+        mk('p-rice', { ingredientId: 'rice', qty: 1000, unit: 'g', location: 'Pantry Shelf 1', bestBefore: off(-1) }),
+        mk('p-oats', { ingredientId: 'oats', qty: 1000, unit: 'g', location: 'Pantry Shelf 1', useBy: off(30) }),
+        mk('p-jam', { ingredientId: 'jam', qty: 300, unit: 'g', location: 'Pantry Shelf 1', useBy: 'soon', bestBefore: 12 })],
+    }));
+    const jam = (await c.all('pantryItems')).find(p => p.id === 'p-jam');
+    t.ok('Dates that aren\'t YYYY-MM-DD are dropped from a file', !('useBy' in jam) && !('bestBefore' in jam));
+    await c.tab('pantry');
+    const row = id => c.$(`[data-action="edit-pantry"][data-id="${id}"]`).closest('.pantry-row');
+    const level = id => (row(id).className.match(/date-(warn|bad)/) || [])[1] || '';
+    c.loc('Fridge'); c.loc('Pantry Shelf 1');
+    t.eq('Use by in 2 days: amber; past use by: red; past best before: amber; a month away: plain',
+      ['p-milk', 'p-chicken', 'p-rice', 'p-oats'].map(level), ['warn', 'bad', 'warn', '']);
+    t.has('The row says when', row('p-chicken').innerText, '(passed)');
+    t.has('…and a far-off date still shows, quietly', row('p-oats').innerText, 'use by');
+    const flag = loc => { const s = c.$$('.larder-loc').find(x => x.querySelector('.loc-name').innerText.trim() === loc).querySelector('summary [title]'); return s ? s.className : ''; };
+    t.eq('Location headings flag it: red where something is past use-by, amber otherwise', [flag('Fridge'), flag('Pantry Shelf 1')], ['fail-text', 'warn-text']);
+
+    // The larder sheet: dates by hand, one big Save, quiet links.
+    await c.click(row('p-oats').querySelector('[data-action="edit-pantry"]'), 60);
+    t.eq('The sheet has one big button (Save)', c.$$('#modal .btn').map(b => b.innerText.trim()), ['Save']);
+    t.ok('…Move… beside Location, ✎ beside the title, Remove and Cancel as text',
+      !!c.$('#modal .field-head [data-action="move-open"]') && !!c.$('#modal h2 [data-action="edit-ingredient"]')
+      && !!c.$('#modal .sheet-foot [data-action="delete-pantry"]') && !!c.$('#modal .sheet-foot [data-action="close-modal"]'));
+    await c.set('#modal [data-m="draft.useBy"]', off(1));
+    await c.click('#modal [data-action="save-pantry"]', 80);
+    t.eq('Set use by tomorrow: oats turn amber', level('p-oats'), 'warn');
+    t.has('…and say "tomorrow"', row('p-oats').innerText, 'use by tomorrow');
+
+    // Moving stock keeps its dates.
+    await c.click(row('p-milk').querySelector('[data-action="edit-pantry"]'), 60);
+    await c.click('#modal [data-action="move-open"]', 60);
+    await c.click('#modal [data-action="move-all"]', 40);
+    await c.click('#modal [data-action="move-to"][data-loc="Freezer"]', 80);
+    const milk = (await c.all('pantryItems')).filter(p => p.ingredientId === 'milk' && p.qty > 0);
+    t.eq('Moved to the freezer with its use-by date', milk.map(p => [p.location, p.useBy]), [['Freezer', off(2)]]);
+
+    const doc = c.w.__mp.nowDoc();
+    t.has('The Now doc lists what to use soon or check', doc, 'Use soon or check');
+    t.ok('…with the overdue one marked passed', /Chicken, Fridge: use by [^<]*\(passed\)/.test(doc));
+    t.ok('…and nothing that isn\'t close', !/Jam,/.test(doc));
+  });
+
   scenario('A meal card holding only extra food (crash fixed in 2.0.2)', async (c, t) => {
     await c.importJson(patch({ recipes: [mk('tea', { name: 'Tea', servings: 1, proteinPerServingG: 1, lactose: 'none', tags: [], method: '', ingredients: [] })] }));
     await c.go(c.w.__mp.today());
