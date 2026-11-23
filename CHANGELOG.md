@@ -2,6 +2,15 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.18.0
+
+- **Flavours:** give an ingredient flavours (Edit ingredient → **Flavours**, one per line, e.g. WPI: Chocolate, Vanilla)
+  and the Larder keeps each one separately, while recipes still use the one ingredient. Eating takes from the flavour
+  with the least left (finish the open bag first); the eaten meal shows which flavour it took, and picking another swaps
+  the stock over. On the shopping list the **$** sheet says which flavour you bought; a new flavour joins the list, and
+  the last one bought is expected next time. Totals (shopping, Keep at least) count every flavour. Existing stock shows as
+  "flavour not set" until you set it on the larder sheet.
+
 ## 2.17.0
 
 - **Aisles per branch:** for a store you shop at in more than one place, add its branches under Settings → Stores

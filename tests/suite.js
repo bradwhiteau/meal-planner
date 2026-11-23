@@ -1036,6 +1036,66 @@
     t.eq('The Butcher never changed', heads('Butcher'), ['Meat']);
   });
 
+  scenario('Flavours: WPI kept by flavour, any one makes the shake (2.18.0)', async (c, t) => {
+    await c.importJson(patch({
+      ingredients: [mk('wpi', { name: 'WPI', defaultUnit: 'g', store: 'Costco', aisle: '1', flavours: ['Chocolate', 'Vanilla'], location: 'Pantry Shelf 1' }),
+        mk('oats', { name: 'Oats', defaultUnit: 'g', store: 'Costco', aisle: '2', location: 'Pantry Shelf 1' })],
+      recipes: [mk('shake', { name: 'WPI shake', servings: 1, proteinPerServingG: 36, lactose: 'low', tags: [], method: '', isShake: true,
+        ingredients: [{ ingredientId: 'wpi', qty: 40, unit: 'g' }, { ingredientId: 'oats', qty: 30, unit: 'g' }] })],
+      pantryItems: [mk('p1', { ingredientId: 'wpi', qty: 500, unit: 'g', location: 'Pantry Shelf 1', flavour: 'Chocolate' }),
+        mk('p2', { ingredientId: 'wpi', qty: 1000, unit: 'g', location: 'Pantry Shelf 1', flavour: 'Vanilla' }),
+        mk('p3', { ingredientId: 'oats', qty: 1000, unit: 'g', location: 'Pantry Shelf 1', flavour: 42 })],
+      weekPlans: [weekPlan('w0', 0, { 0: { breakfast: [{ id: 'sh', recipeId: 'shake', servings: 1, cook: null }] } })],
+      shoppingItems: [mk('s1', { weekStart: day(0), ingredientId: 'wpi', text: null, qty: 1000, unit: 'g', checked: false, manual: false })],
+    }));
+    const stock = async () => (await c.all('pantryItems')).filter(p => p.ingredientId === 'wpi').map(p => `${p.flavour || '-'}:${p.qty}`).sort();
+    t.ok('A flavour that isn\'t text is dropped from a file', !('flavour' in (await c.all('pantryItems')).find(p => p.id === 'p3')));
+
+    await c.tab('pantry');
+    const shelf = c.loc('Pantry Shelf 1').innerText;
+    t.ok('The larder lists each flavour on its own', shelf.includes('Chocolate') && shelf.includes('Vanilla'));
+    t.ok('…an ingredient without flavours looks as before', !/flavour not set/.test(shelf));
+
+    // Eating the shake takes from the flavour with the least left (finish the open bag).
+    await c.go(day(0));
+    await c.click(c.card('breakfast').querySelector('[data-action="eat"][data-item="sh"]'), 150);
+    t.eq('The shake took 40 g of Chocolate (the one with less left)', await stock(), ['Chocolate:460', 'Vanilla:1000']);
+    const pick = () => c.card('breakfast').querySelector('select[data-flavour-log]');
+    t.eq('The eaten shake says which flavour it took', pick() && pick().value, 'Chocolate');
+    t.ok('…but not for oats, which has no flavours', !c.card('breakfast').querySelector('select[data-ing="oats"]'));
+    await c.set('select[data-flavour-log]', 'Vanilla');
+    t.eq('Switching to Vanilla puts the Chocolate back and takes Vanilla', await stock(), ['Chocolate:500', 'Vanilla:960']);
+    t.eq('…and the card now says Vanilla', pick().value, 'Vanilla');
+    await c.click(c.card('breakfast').querySelector('[data-action="undo-log"]'), 150);
+    t.eq('Undo puts the Vanilla back', await stock(), ['Chocolate:500', 'Vanilla:1000']);
+
+    // Shopping: say which flavour was bought; a new one joins the list.
+    await c.shop(day(0));
+    await c.click('[data-action="edit-item"][data-id="s1"]', 60);
+    await c.set('#modal [data-m="draft.flavour"]', 'Cookies');
+    await c.click('#modal [data-action="save-item"]', 80);
+    t.has('The line shows the flavour it\'ll go in as', c.shopText('WPI'), 'Cookies');
+    await c.click('[data-action="tick"][data-id="s1"]', 150);
+    t.eq('Ticked: in the larder as Cookies', await stock(), ['Chocolate:500', 'Cookies:1000', 'Vanilla:1000']);
+    let wpi = (await c.all('ingredients')).find(i => i.id === 'wpi');
+    t.eq('Cookies joins WPI\'s flavours and is remembered for next time', [wpi.flavours, wpi.lastFlavour], [['Chocolate', 'Vanilla', 'Cookies'], 'Cookies']);
+    await c.click('[data-action="edit-item"][data-id="s1"]', 60);
+    await c.set('#modal [data-m="draft.flavour"]', 'Vanilla');
+    await c.click('#modal [data-action="save-item"]', 80);
+    t.eq('Changing the flavour after ticking moves the stock', await stock(), ['Chocolate:500', 'Cookies:0', 'Vanilla:2000']);
+
+    // The larder sheet and the ingredient sheet.
+    await c.tab('pantry');
+    await c.click(c.loc('Pantry Shelf 1').querySelector('[data-action="edit-pantry"][data-id="p1"]'), 60);
+    t.eq('The larder sheet has the flavour', c.$('#modal [data-m="draft.flavour"]').value, 'Chocolate');
+    await c.click('#modal [data-action="edit-ingredient"]', 60);
+    t.eq('The ingredient sheet lists its flavours, one per line', c.$('#modal [data-m="draft.flavoursText"]').value, 'Chocolate\nVanilla\nCookies');
+    await c.set('#modal [data-m="draft.flavoursText"]', 'Chocolate\nVanilla');
+    await c.click('#modal [data-action="save-ingredient"]', 80);
+    wpi = (await c.all('ingredients')).find(i => i.id === 'wpi');
+    t.eq('…and saves them from there', wpi.flavours, ['Chocolate', 'Vanilla']);
+  });
+
   scenario('A meal card holding only extra food (crash fixed in 2.0.2)', async (c, t) => {
     await c.importJson(patch({ recipes: [mk('tea', { name: 'Tea', servings: 1, proteinPerServingG: 1, lactose: 'none', tags: [], method: '', ingredients: [] })] }));
     await c.go(c.w.__mp.today());

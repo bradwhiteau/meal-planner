@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.17.0';
+  const APP_VERSION = '2.18.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -527,12 +527,18 @@
     const b = it.ingredientId && boughtOf(it);
     if (!b) return;
     const ing = byId('ingredients', it.ingredientId) || {}, rows = larderRows(it.ingredientId, b.unit);
-    const loc = ing.location || (rows[0] ? locOf(rows[0]) : '');
-    pantryAdd(it.ingredientId, b.qty, b.unit, loc);
-    it.pantryAdded = { qty: b.qty, unit: b.unit, location: loc };
+    const loc = ing.location || (rows[0] ? locOf(rows[0]) : ''), f = boughtFlavour(it);
+    pantryAdd(it.ingredientId, b.qty, b.unit, loc, f);
+    it.pantryAdded = { qty: b.qty, unit: b.unit, location: loc, ...(f ? { flavour: f } : {}) };
+  }
+  // The flavour a ticked line goes into the larder as: the one set on the line, else the last one bought.
+  function boughtFlavour(it) {
+    const ing = it.ingredientId && byId('ingredients', it.ingredientId);
+    if (!ing || !flavoursOf(ing).length) return '';
+    return it.flavour || ing.lastFlavour || '';
   }
   function larderOut(it) {
-    if (it.pantryAdded && it.ingredientId) pantryTake(it.ingredientId, it.pantryAdded.qty, it.pantryAdded.unit, it.pantryAdded.location);
+    if (it.pantryAdded && it.ingredientId) pantryTake(it.ingredientId, it.pantryAdded.qty, it.pantryAdded.unit, it.pantryAdded.location, it.pantryAdded.flavour || '');
     delete it.pantryAdded;
   }
   // Branches: a store with two or more (settings.branches.Woolworths = ['Mundaring', 'Kalamunda']) gets a
@@ -593,27 +599,40 @@
     .sort((a, b) => isFridge(locOf(b)) - isFridge(locOf(a)));
   const larderQty = (ingredientId, baseUnit) => S.pantryItems.filter(x => x.ingredientId === ingredientId && norm(1, x.unit).unit === baseUnit)
     .reduce((t, x) => t + norm(Number(x.qty) || 0, x.unit).qty, 0);
+  // Flavours: an ingredient can list them (WPI: Chocolate, Vanilla). Each Larder row then has a `flavour` ('' = not
+  // set), recipes still use the one ingredient, and totals (shopping, Keep at least) count every flavour.
+  const flv = p => (p && isStr(p.flavour) ? p.flavour : '');
+  const flavoursOf = ing => (ing && Array.isArray(ing.flavours) ? ing.flavours : []);
+  function addFlavour(ing, f) {
+    f = String(f || '').trim();
+    if (!ing || !f || flavoursOf(ing).some(x => x.toLowerCase() === f.toLowerCase())) return;
+    ing.flavours = [...flavoursOf(ing), f]; put('ingredients', ing);
+  }
   // Adds stock to a location: the one given, else the ingredient's usual spot, else wherever it already is.
-  function pantryAdd(ingredientId, qty, unit, location) {
+  function pantryAdd(ingredientId, qty, unit, location, flavour = '') {
     const ing = byId('ingredients', ingredientId) || {}, rows = larderRows(ingredientId, unit);
     const loc = location != null ? location : (ing.location || (rows[0] ? locOf(rows[0]) : ''));
-    const p = rows.find(x => locOf(x) === loc);
+    const p = rows.find(x => locOf(x) === loc && flv(x) === (flavour || ''));
     if (p) { p.qty = round(Math.max(0, (Number(p.qty) || 0) + norm(qty, unit).qty / norm(1, p.unit).qty), 3); put('pantryItems', p); }
-    else if (qty > 0) put('pantryItems', { ingredientId, qty: round(qty, 3), unit, location: loc });
+    else if (qty > 0) put('pantryItems', { ingredientId, qty: round(qty, 3), unit, location: loc, ...(flavour ? { flavour } : {}) });
   }
-  // Takes up to qty out (never below zero), from `prefer` first if given, then fridge first. Returns what was
-  // taken from each place, in base units, so Undo can put it back exactly where it came from.
-  function pantryTake(ingredientId, qty, unit, prefer) {
+  // Takes up to qty out (never below zero). With a flavour, that flavour first; without, the flavour with the least
+  // left first (finish the open bag). Then `prefer` (a location) if given, then fridge first. Returns what was taken
+  // from each place, in base units, so Undo can put it back exactly where it came from.
+  function pantryTake(ingredientId, qty, unit, prefer, flavour) {
     const want = norm(Number(qty) || 0, unit), out = [];
     let left = want.qty;
-    const rows = larderRows(ingredientId, unit);
-    if (prefer != null) rows.sort((a, b) => (locOf(b) === prefer) - (locOf(a) === prefer));
+    const rows = larderRows(ingredientId, unit), tot = new Map();
+    rows.forEach(p => tot.set(flv(p), (tot.get(flv(p)) || 0) + Math.max(0, norm(Number(p.qty) || 0, p.unit).qty)));
+    const group = p => (flavour != null ? (flv(p) === flavour ? 0 : 1) : tot.get(flv(p)));
+    rows.sort((a, b) => (group(a) - group(b)) || flv(a).localeCompare(flv(b))
+      || (prefer != null ? (locOf(b) === prefer) - (locOf(a) === prefer) : 0) || (isFridge(locOf(b)) - isFridge(locOf(a))));
     for (const p of rows) {
       const per = norm(1, p.unit).qty, have = (Number(p.qty) || 0) * per, t = Math.min(have, left);
       if (!(t > 0)) continue;
       p.qty = round((have - t) / per, 3); put('pantryItems', p);
       left -= t;
-      out.push({ ingredientId, qty: round(t, 3), unit: want.unit, location: locOf(p) });
+      out.push({ ingredientId, qty: round(t, 3), unit: want.unit, location: locOf(p), ...(flv(p) ? { flavour: flv(p) } : {}) });
     }
     return out;
   }
@@ -623,7 +642,22 @@
     return r.ingredients.flatMap(x => pantryTake(x.ingredientId, (Number(x.qty) || 0) * factor, x.unit));
   }
   // Older records have no location: those go back to the ingredient's usual spot.
-  const returnUsed = log => (log.pantryUsed || []).forEach(u => pantryAdd(u.ingredientId, u.qty, u.unit, isStr(u.location) ? u.location : undefined));
+  const returnUsed = log => (log.pantryUsed || []).forEach(u => pantryAdd(u.ingredientId, u.qty, u.unit, isStr(u.location) ? u.location : undefined, flv(u)));
+  // After eating: swap the flavour a meal took (the WPI in a shake) for another. What was taken goes back, and the
+  // same amount comes out of the chosen flavour. `rec` is the log, or the cooked record of a cooked slot.
+  function switchFlavour(rec, ingredientId, flavour) {
+    const used = rec.pantryUsed || [], mine = used.filter(u => u.ingredientId === ingredientId);
+    if (!mine.length) return;
+    const unit = norm(1, mine[0].unit).unit, amt = mine.reduce((t, u) => t + norm(Number(u.qty) || 0, u.unit).qty, 0);
+    mine.forEach(u => pantryAdd(u.ingredientId, u.qty, u.unit, isStr(u.location) ? u.location : undefined, flv(u)));
+    rec.pantryUsed = [...used.filter(u => u.ingredientId !== ingredientId), ...pantryTake(ingredientId, amt, unit, undefined, flavour)];
+  }
+  // The flavour a meal mostly took of an ingredient.
+  function flavourTaken(rec, ingredientId) {
+    const by = new Map();
+    (rec.pantryUsed || []).filter(u => u.ingredientId === ingredientId).forEach(u => by.set(flv(u), (by.get(flv(u)) || 0) + Number(u.qty)));
+    return ([...by].sort((a, b) => b[1] - a[1])[0] || [''])[0];
+  }
 
   // ---------- prepared meals (cooked portions in the Larder) ----------
   // A Larder row with recipeId (and no ingredientId) holds cooked portions: qty = portions, unit 'portion',
@@ -796,8 +830,8 @@
       if (!(t > 0)) continue;
       p.qty = round((have - t) / per, 3); put('pantryItems', p);
       left -= t; moved += t;
+      pantryAdd(ingredientId, round(t, 3), norm(1, unit).unit, fridgeLoc(), flv(p));
     }
-    if (moved > 0) pantryAdd(ingredientId, round(moved, 3), norm(1, unit).unit, fridgeLoc());
     return round(moved, 3);
   }
   // Sunday morning: plan next week and generate the list. (Cooking happens on the day of each meal, cook once eat twice,
@@ -924,6 +958,8 @@
       if (!(Number(r.keepQty) > 0) || !isStr(r.keepUnit) || !r.keepUnit.trim()) { delete r.keepQty; delete r.keepUnit; }
       if (r.cookFromFrozen !== true) delete r.cookFromFrozen;
       cleanAisles(r);
+      if (r.flavours != null) { r.flavours = Array.isArray(r.flavours) ? r.flavours.filter(x => isStr(x) && x.trim()) : []; if (!r.flavours.length) delete r.flavours; }
+      if (r.lastFlavour != null && !isStr(r.lastFlavour)) delete r.lastFlavour;
       return true;
     },
     recipes: r => {
@@ -956,6 +992,7 @@
       for (const k of ['buyUnit', 'boughtUnit']) if (r[k] != null && !isStr(r[k])) delete r[k];
       if (r.pantryAdded != null && !(isObj(r.pantryAdded) && Number(r.pantryAdded.qty) > 0 && isStr(r.pantryAdded.unit))) delete r.pantryAdded;
       else if (r.pantryAdded && r.pantryAdded.location != null && !isStr(r.pantryAdded.location)) delete r.pantryAdded.location;
+      if (r.flavour != null && !isStr(r.flavour)) delete r.flavour;
       cleanAisles(r);
       return true;
     },
@@ -963,6 +1000,7 @@
       if (!isStr(r.ingredientId) && !isStr(r.recipeId)) return false;    // an ingredient, or cooked portions of a recipe
       if (r.location != null && !isStr(r.location)) delete r.location;
       if (r.cookedOn != null && !(isStr(r.cookedOn) && /^\d{4}-\d{2}-\d{2}$/.test(r.cookedOn))) delete r.cookedOn;
+      if (r.flavour != null && !(isStr(r.flavour) && r.flavour.trim())) delete r.flavour;
       return true;
     },
     mealLogs: r => {
@@ -1586,12 +1624,16 @@
   const SUGGEST = {
     ing: () => sortByName(S.ingredients).map(i => i.name),
     aisle: () => [...new Set(S.ingredients.flatMap(i => [i.aisle, ...Object.values(i.aisles || {})]).filter(Boolean))].sort(),
+    flavour: () => {
+      const m = ui.modal, d = (m && m.draft) || {};
+      return flavoursOf(byId('ingredients', d.ingredientId) || ingByName(d.name || d.text || ''));
+    },
   };
   function showSuggest(input) {
     const next = input.nextElementSibling;
     if (next && next.classList.contains('suggest')) next.remove();
     const q = input.value.trim().toLowerCase(), list = SUGGEST[input.dataset.suggest];
-    if (!q || !list) return;
+    if ((!q && input.dataset.suggest !== 'flavour') || !list) return;
     const hits = list().filter(n => n.toLowerCase().includes(q) && n.toLowerCase() !== q)
       .sort((a, b) => b.toLowerCase().startsWith(q) - a.toLowerCase().startsWith(q)).slice(0, 6);
     if (hits.length) input.insertAdjacentHTML('afterend', `<div class="suggest">${hits.map(n => `<button type="button" data-action="suggest-pick" data-v="${esc(n)}">${esc(n)}</button>`).join('')}</div>`);
@@ -1654,7 +1696,11 @@
     // Each meal is a compact card: one line per item, protein on the right, one action per line.
     // Extra food shows in the meal it was added to; anything without a meal goes with snacks.
     const doneRow = (l, sub) => {
-      const lr = l.recipeId && byId('recipes', l.recipeId);
+      const lr = l.recipeId && byId('recipes', l.recipeId), rec = usedRecord(l);
+      const fl = rec ? [...new Set((rec.pantryUsed || []).map(u => u.ingredientId))].map(id => byId('ingredients', id)).filter(i => i && flavoursOf(i).length) : [];
+      const flHtml = fl.map(i => { const cur = flavourTaken(rec, i.id), opts = [...new Set([...flavoursOf(i), cur].filter(Boolean))];
+        return `<label class="flavour-pick">${esc(i.name)}: ${isViewer() ? esc(cur || 'flavour not set') : `<select data-flavour-log="${l.id}" data-ing="${esc(i.id)}">${cur ? '' : '<option value="" selected>not set</option>'}${opts.map(o => `<option ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`}</label>`; }).join('');
+      if (flHtml) sub = [sub, flHtml].filter(Boolean).join(' ');
       const name = l.skipped ? 'Skipped' : esc(logLabel(l));
       const nameHtml = lr ? `<button class="item-name link-plain" data-action="show-recipe" data-id="${lr.id}">${name}</button>` : `<span class="item-name">${name}</span>`;
       return `<div class="item done ${l.skipped ? 'skipped' : ''}"><span class="item-mark">${l.skipped ? '–' : l.planned || l.extra ? '✓' : '↺'}</span>
@@ -1725,6 +1771,12 @@
     }
     html += '</div>';
     return html;
+  }
+  function usedRecord(l) {
+    if (l.pantryUsed) return l;
+    if (!l.cookedSlot) return null;
+    const { plan, i } = locateDay(l.date), sl = i >= 0 && findItem(plan.days[i], l.slot, l.item);
+    return sl && sl.cooked && sl.cooked.pantryUsed ? sl.cooked : null;
   }
   function logLabel(l) {
     const r = l.recipeId && byId('recipes', l.recipeId);
@@ -1858,7 +1910,7 @@
           return `<div class="shop-row"><button class="shop-item ${it.checked ? 'checked' : ''}" data-action="tick" data-id="${it.id}">
             <span class="tick">${it.checked ? '✓' : ''}</span>
             <span class="si-main"><span class="si-name">${esc(x.name)}</span>
-              <span class="si-qty">${shopQty(it)}${x.isLocal ? ' · <span class="badge local">local</span>' : ''}${it.carried ? ' · carried over' : ''}${x.aisleHint ? ` · <span class="si-hint">${esc(x.aisleHint)}</span>` : ''}</span>
+              <span class="si-qty">${shopQty(it)}${x.isLocal ? ' · <span class="badge local">local</span>' : ''}${it.carried ? ' · carried over' : ''}${boughtFlavour(it) ? ` · ${esc(boughtFlavour(it))}` : ''}${x.aisleHint ? ` · <span class="si-hint">${esc(x.aisleHint)}</span>` : ''}</span>
               ${shopNeed(it)}</span>
             ${it.price != null && it.price !== '' ? `<span class="si-price">${money(it.price)}</span>` : ''}</button>
             <button class="si-more edit-only" data-action="edit-item" data-id="${it.id}" aria-label="Edit ${esc(x.name)}">$</button></div>`;
@@ -1884,8 +1936,9 @@
     const step = norm(1, p.unit).measured ? (p.unit === 'kg' || p.unit.toLowerCase() === 'l' ? 0.5 : 100) : 1;
     const when = p.updatedAt ? fmtDate(ymd(new Date(p.updatedAt))) : '', ing = byId('ingredients', p.ingredientId);
     const min = keepOf(ing) ? `<small class="min ${keepLow(p.ingredientId) ? 'warn-text' : ''}">Min: ${esc(fmtQty(Number(ing.keepQty), ing.keepUnit))}</small>` : '';
-    return `<div class="pantry-row ${Number(p.qty) > 0 ? '' : 'out'}" data-name="${esc(ingName(p.ingredientId).toLowerCase())}"><button class="grow larder-name" data-action="edit-pantry" data-id="${p.id}">
-        ${esc(ingName(p.ingredientId))}${when ? `<span class="sub">changed ${when}</span>` : ''}</button>
+    const fl = flavoursOf(ing).length ? `<span class="flavour">${flv(p) ? esc(flv(p)) : 'flavour not set'}</span>` : '';
+    return `<div class="pantry-row ${Number(p.qty) > 0 ? '' : 'out'}" data-name="${esc((ingName(p.ingredientId) + ' ' + flv(p)).toLowerCase())}"><button class="grow larder-name" data-action="edit-pantry" data-id="${p.id}">
+        ${esc(ingName(p.ingredientId))}${fl}${when ? `<span class="sub">changed ${when}</span>` : ''}</button>
       <span class="stepper stacked"><button class="qty" data-action="edit-pantry" data-id="${p.id}">${esc(fmtQty(Number(p.qty) || 0, p.unit))}${min}</button>
       <button class="edit-only plus" data-action="pantry-step" data-id="${p.id}" data-d="${step}" aria-label="More">+</button>
       <button class="edit-only minus" data-action="pantry-step" data-id="${p.id}" data-d="${-step}" aria-label="Less">−</button></span></div>`;
@@ -1911,8 +1964,8 @@
   // matches show, locations with none are hidden, and the rest open (without changing what's remembered).
   function larderBody() {
     const q = ui.larderQuery.trim().toLowerCase();
-    const hit = x => !q || (x.recipeId ? (byId('recipes', x.recipeId) || {}).name || 'meal' : ingName(x.ingredientId)).toLowerCase().includes(q);
-    const byName = (a, b) => ingName(a.ingredientId).localeCompare(ingName(b.ingredientId));
+    const hit = x => !q || (x.recipeId ? (byId('recipes', x.recipeId) || {}).name || 'meal' : ingName(x.ingredientId) + ' ' + flv(x)).toLowerCase().includes(q);
+    const byName = (a, b) => ingName(a.ingredientId).localeCompare(ingName(b.ingredientId)) || flv(a).localeCompare(flv(b));
     const ingRows = S.pantryItems.filter(p => !isPortion(p));
     const stocked = ingRows.filter(p => Number(p.qty) > 0), out = ingRows.filter(p => !(Number(p.qty) > 0)).sort(byName);
     const meals = S.pantryItems.filter(p => isPortion(p) && Number(p.qty) > 0);
@@ -2211,6 +2264,8 @@
         <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local (bought from a local producer)</label>
         <label class="toggle"><input type="checkbox" data-m="draft.cookFromFrozen" ${d.cookFromFrozen ? 'checked' : ''}> Cook from frozen (no reminder to thaw it)</label>
         <p class="muted">With a pack size, the shopping list buys whole packs and prices them per pack.</p>
+        ${field('Flavours (optional, one per line)', `<textarea rows="3" data-m="draft.flavoursText" placeholder="Chocolate&#10;Vanilla">${esc(d.flavoursText || '')}</textarea>`)}
+        <p class="muted">With flavours, the larder keeps each one separately and recipes use any of them.</p>
         <div class="row"><button class="btn primary" data-action="save-ingredient">Save</button>
           <button class="btn danger" data-action="delete-ingredient">Delete</button>${cancelBtn()}</div>`;
     },
@@ -2239,7 +2294,8 @@
           ${field('Price ($)', `<input type="number" inputmode="decimal" step="0.01" data-m="draft.price" data-type="num" value="${esc(d.price == null ? '' : d.price)}">`)}</div>
         <div class="row">${field('Store', storeSelect('draft.store', d.store))}
           ${field(aisleField(d.store), `<input type="text" data-suggest="aisle" data-m="draft.aisle" value="${esc(d.aisle)}">`)}</div>
-        <div class="row">${field('Larder location', locationSelect('draft.location', d.location || ''))}</div>
+        <div class="row">${field('Larder location', locationSelect('draft.location', d.location || ''))}
+          ${flavoursOf(ing).length ? field('Flavour', `<input type="text" data-suggest="flavour" data-m="draft.flavour" value="${esc(d.flavour || '')}" placeholder="e.g. Chocolate">`) : ''}</div>
         <label class="toggle"><input type="checkbox" data-m="draft.isLocal" ${d.isLocal ? 'checked' : ''}> Local</label>
         <p class="muted">Price is what this line cost. Pack size, price, store, aisle and location are saved to the ingredient, so future lists buy whole packs at the right price. Ticking puts what you bought in the larder.</p>
         <div class="row"><button class="btn primary" data-action="save-item">Save</button>${cancelBtn()}</div>`;
@@ -2250,7 +2306,8 @@
         ${m.id ? '' : field('Item', `<input type="text" data-suggest="ing" data-m="draft.name" data-rerender value="${esc(d.name)}" placeholder="e.g. Rolled oats">`)}
         <div class="row">${field('Amount on hand', `<input type="number" inputmode="decimal" data-m="draft.qty" data-type="num" value="${esc(d.qty == null ? '' : d.qty)}">`)}
           ${field('Unit', unitSelect('draft.unit', m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || ''), d.unit))}</div>
-        <div class="row">${field('Location', locationSelect('draft.location', d.location || ''))}</div>
+        <div class="row">${field('Location', locationSelect('draft.location', d.location || ''))}
+          ${flavoursOf(m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || '')).length ? field('Flavour', `<input type="text" data-suggest="flavour" data-m="draft.flavour" value="${esc(d.flavour || '')}" placeholder="e.g. Chocolate">`) : ''}</div>
         <div class="row">${field('Keep at least', `<input type="number" inputmode="decimal" data-m="draft.keepQty" data-type="num" value="${esc(d.keepQty == null ? '' : d.keepQty)}" placeholder="no minimum">`)}
           ${field('Unit', unitSelect('draft.keepUnit', m.id ? byId('ingredients', d.ingredientId) : ingByName(d.name || ''), d.keepUnit || d.unit))}</div>
         <p class="muted">Keep at least: counted across every location. When what's left after the week's meals would drop below it, the shopping list tops it up.</p>
@@ -2643,7 +2700,7 @@
       const b = boughtOf(it) || {};
       openModal({ type: 'item', id: it.id, priceShown: it.price, boughtShown: { qty: b.qty == null ? null : b.qty, unit: b.unit || '' }, draft: { ...clone(it), store: x.store, aisle: x.aisle, isLocal: x.isLocal,
         packQty: ing ? ing.packQty : null, packUnit: ing ? ing.packUnit || '' : '', location: ing ? ing.location || '' : '',
-        boughtQty: b.qty == null ? null : b.qty, boughtUnit: b.unit || '' } });
+        boughtQty: b.qty == null ? null : b.qty, boughtUnit: b.unit || '', flavour: boughtFlavour(it) } });
     },
     'save-item'() {
       const m = ui.modal, d = m.draft;
@@ -2678,10 +2735,13 @@
           } else ing.lastPrice = Number(d.price);
         }
         put('ingredients', ing);
-        // Already ticked and the amount bought changed: the larder follows.
+        // The flavour bought: kept on the line, and remembered as the one to expect next time.
+        const f = flavoursOf(ing).length ? String(d.flavour || '').trim() : '';
+        if (f) { it.flavour = f; ing.lastFlavour = f; addFlavour(ing, f); } else delete it.flavour;
+        // Already ticked and the amount (or flavour) bought changed: the larder follows.
         if (it.checked) {
           const b = boughtOf(it), a = it.pantryAdded;
-          if (!a || !b || a.qty !== b.qty || a.unit !== b.unit) { larderOut(it); larderIn(it); }
+          if (!a || !b || a.qty !== b.qty || a.unit !== b.unit || (a.flavour || '') !== boughtFlavour(it)) { larderOut(it); larderIn(it); }
         }
         S.pantryItems.filter(p => p.ingredientId === ing.id && !p.location && ing.location).forEach(p => { p.location = ing.location; put('pantryItems', p); });
       } else {
@@ -2709,12 +2769,17 @@
     'save-pantry'() {
       const m = ui.modal, d = m.draft;
       if (m.id) {
-        const p = byId('pantryItems', m.id), loc = d.location || '';
-        const same = S.pantryItems.find(x => x !== p && x.ingredientId === p.ingredientId && locOf(x) === loc && norm(1, x.unit).unit === norm(1, d.unit || p.unit).unit);
-        if (same && loc !== locOf(p)) {        // moved somewhere it already is: merge
+        const p = byId('pantryItems', m.id), loc = d.location || '', f = String(d.flavour || '').trim();
+        const same = S.pantryItems.find(x => x !== p && x.ingredientId === p.ingredientId && locOf(x) === loc && flv(x) === f && norm(1, x.unit).unit === norm(1, d.unit || p.unit).unit);
+        if (same && (loc !== locOf(p) || f !== flv(p))) {        // moved (or relabelled) to a row that's already there: merge
           same.qty = round((Number(same.qty) || 0) + norm(Number(d.qty) || 0, d.unit || p.unit).qty / norm(1, same.unit).qty, 3);
           put('pantryItems', same); remove('pantryItems', p.id);
-        } else { Object.assign(p, { qty: d.qty || 0, unit: d.unit, location: loc }); put('pantryItems', p); }
+        } else {
+          Object.assign(p, { qty: d.qty || 0, unit: d.unit, location: loc });
+          if (f) p.flavour = f; else delete p.flavour;
+          put('pantryItems', p);
+        }
+        addFlavour(byId('ingredients', p.ingredientId), f);
         setKeep(byId('ingredients', p.ingredientId), d);
         return closeModal();
       }
@@ -2724,7 +2789,9 @@
       if (!ing) { ing = { name, defaultUnit: d.unit || 'each', store: settings.stores[settings.stores.length - 1] || '', aisle: '', isLocal: false, lastPrice: null }; put('ingredients', ing); }
       const unit = d.unit || ing.defaultUnit || 'each';
       if (d.location && !ing.location) { ing.location = d.location; put('ingredients', ing); }
-      pantryAdd(ing.id, d.qty || 0, unit, d.location || ing.location || '');
+      const f = flavoursOf(ing).length ? String(d.flavour || '').trim() : '';
+      pantryAdd(ing.id, d.qty || 0, unit, d.location || ing.location || '', f);
+      addFlavour(ing, f);
       setKeep(ing, d);
       closeModal();
     },
@@ -2750,7 +2817,7 @@
         // Joins the row already there, if any. A row moved in full goes, rather than staying as "run out".
         const unit = x.unit;
         if (n >= have) remove('pantryItems', x.id); else { x.qty = round(have - n, 3); put('pantryItems', x); }
-        pantryAdd(x.ingredientId, n, unit, to);
+        pantryAdd(x.ingredientId, n, unit, to, flv(x));
       }
       closeModal();
       toast(`Moved ${fmtQty(n, isPortion(x) ? (n === 1 ? 'portion' : 'portions') : x.unit)} to ${to}`);
@@ -2803,7 +2870,7 @@
       if (!confirm(used ? 'This recipe is in a week plan or template. Delete it anyway?' : 'Delete this recipe?')) return;
       remove('recipes', id); closeModal();
     },
-    'edit-ingredient'(el) { const i = byId('ingredients', el.dataset.id); openModal({ type: 'ingredient', id: i.id, draft: { ...clone(i), aisle: aisleAt(i, i.store).aisle } }); },
+    'edit-ingredient'(el) { const i = byId('ingredients', el.dataset.id); openModal({ type: 'ingredient', id: i.id, draft: { ...clone(i), aisle: aisleAt(i, i.store).aisle, flavoursText: flavoursOf(i).join('\n') } }); },
     'save-ingredient'() {
       const m = ui.modal, d = m.draft, i = byId('ingredients', m.id);
       if (!String(d.name || '').trim()) return toast('Name it');
@@ -2811,10 +2878,13 @@
       if (clash && clash.id !== i.id) return toast('Another ingredient already has that name');
       Object.assign(i, { name: d.name.trim(), store: d.store, defaultUnit: (d.defaultUnit || '').trim(), lastPrice: d.lastPrice, isLocal: !!d.isLocal, location: d.location || '' });
       setAisleAt(i, d.store, d.aisle);
+      const fl = [...new Map(String(d.flavoursText || '').split('\n').map(x => x.trim()).filter(Boolean).map(x => [x.toLowerCase(), x])).values()];
+      if (fl.length) i.flavours = fl; else { delete i.flavours; delete i.lastFlavour; }
       const pq = Number(d.packQty) > 0 ? Number(d.packQty) : null, pu = String(d.packUnit || '').trim();
       if (pq && pu) Object.assign(i, { packQty: pq, packUnit: pu, packPrice: hasNum(d.packPrice) ? Number(d.packPrice) : null });
       else { delete i.packQty; delete i.packUnit; }
       if (d.cookFromFrozen) i.cookFromFrozen = true; else delete i.cookFromFrozen;
+      delete i.flavoursText;
       put('ingredients', i); closeModal();
     },
     'delete-ingredient'() {
@@ -3024,6 +3094,8 @@
   }
   document.addEventListener('input', onField);
   document.addEventListener('input', e => { if (e.target.dataset && e.target.dataset.suggest) showSuggest(e.target); });
+  // The flavour box lists the ingredient's flavours as soon as it's tapped (there are only a few).
+  document.addEventListener('focusin', e => { if (e.target.dataset && e.target.dataset.suggest === 'flavour') showSuggest(e.target); });
   // Tapping a suggestion mustn't take focus from the field first (its change event would redraw the sheet mid-tap).
   document.addEventListener('mousedown', e => { if (e.target.closest && e.target.closest('.suggest')) e.preventDefault(); });
   // Suggestions go away when you move to another field.
@@ -3050,6 +3122,14 @@
       dset({ [el.dataset.drive]: v }); drive.pending = [];
       if (driveReady()) loadGis().catch(() => {});
       render(); renderDriveChip();
+      return;
+    }
+    if (el.dataset.flavourLog) {
+      const l = byId('mealLogs', el.dataset.flavourLog), rec = l && usedRecord(l);
+      if (!rec || isViewer()) { render(); return; }
+      switchFlavour(rec, el.dataset.ing, el.value);
+      if (rec === l) put('mealLogs', l); else put('weekPlans', locateDay(l.date).plan);
+      render(); toast(`Took ${el.value || 'it'} instead`);
       return;
     }
     if (el.dataset.shopAt) {

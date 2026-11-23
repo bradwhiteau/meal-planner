@@ -372,3 +372,8 @@ body.viewer .stepper.stacked .qty { grid-row: auto; }
 .branch-pick { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; font-size: .9rem; }
 .branch-pick select { width: auto; min-width: 9em; }
 .si-hint { font-style: italic; }
+
+/* Flavours: shown beside the name in the larder, and as a small choice on an eaten meal. */
+.larder-name .flavour { display: block; font-size: .85rem; color: var(--muted); }
+.flavour-pick { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; margin-top: 4px; }
+.flavour-pick select { width: auto; padding: 2px 6px; font-size: .85rem; }
