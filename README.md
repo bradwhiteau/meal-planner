@@ -128,6 +128,20 @@ It replaces its own copy with `latest.json` on open, when you come back to it, e
 (**View · 8:10 am** is when the phone last saved). It never writes to Drive and never reads the inbox, and editing is hidden.
 Changes are made on the phone only. Only one device, the phone, should be the **Main phone**: a second main device would overwrite `latest.json`.
 
+### Sharing with someone (two phones, one plan)
+
+Two people can share the plan, shopping list, larder and recipes, each on their own phone and Google account.
+Drive sync needs to be set up in this copy of the app (step 2 above); the Claude mailbox folders are not needed.
+
+1. On the first phone: **⋮ → Settings → Share with someone**, type your name, tap **Start a shared folder**
+   (it makes `Meal Planner shared` in your Drive), then put the other person's Google email under **Invite** and tap it.
+2. On the second phone: type your name and tap **Find our shared folder**.
+
+Each phone writes its own file in that folder and reads the other's: every 20 seconds while the app is open, a few
+seconds after any change, and when you tap the chip (**Shared ✓**, or **Shared •** with changes waiting). The newest change
+to each thing wins, and deleted things stay deleted. If you both change the same thing within a few seconds, only the
+later change is kept. **Stop sharing** leaves everything on both phones; changes just stop going between them.
+
 ### Reminders
 
 | Reminder | When |

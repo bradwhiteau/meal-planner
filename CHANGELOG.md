@@ -2,6 +2,21 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.20.0
+
+- **Share with someone:** two phones can now share one plan. Meals, the shopping list, the larder and recipes stay in
+  step through a shared Drive folder. On one phone go to Settings → **Share with someone**, add your name, tap **Start a
+  shared folder**, then **Invite** the other person by email. On the other phone, add your name and tap **Find our shared
+  folder**. Each phone checks for the other's changes every 20 seconds while it's open, and shares its own a few seconds
+  after any change. The chip shows **Shared ✓**, or **Shared •** while changes are waiting.
+- How it works: each phone writes only its own file (`household-<device>.json`) and reads the other's. For each record
+  the newest change wins, and deletions are remembered for 60 days so the other phone's older copy can't bring them back.
+  If you both change the same thing within a few seconds, the later change wins.
+- New week plans, generated shopping-list lines and larder rows get ids from what they are (the week; the week,
+  ingredient and unit; the ingredient and its spot), so both phones make the same record instead of two copies.
+  Regenerating the list no longer re-saves lines that didn't change, so it can't undo a tick from the other phone.
+- The Claude mailbox (inbox and outbox) works as before, and can run alongside sharing.
+
 ## 2.19.0
 
 - **Use by and best before:** tap a larder item to give it either date. Within 3 days of either, or past best before,

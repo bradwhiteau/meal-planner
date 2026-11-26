@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.19.0';
+  const APP_VERSION = '2.20.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -103,19 +103,55 @@
     recs = Array.isArray(recs) ? recs : [recs];
     const t = nowIso();
     for (const r of recs) {
-      if (!r.id) { r.id = uuid(); r.createdAt = t; }
+      if (!r.id) r.id = store === 'pantryItems' ? larderId(r) : uuid();
+      if (!r.createdAt) r.createdAt = t;
       r.updatedAt = t;
       const i = S[store].findIndex(x => x.id === r.id);
       if (i < 0) S[store].push(r); else S[store][i] = r;
     }
+    unTomb(store, recs.map(r => r.id));
     markDirty();
     return write(store, recs);
   }
   function remove(store, ids) {
-    ids = Array.isArray(ids) ? ids : [ids];
+    ids = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+    if (!ids.length) return Promise.resolve();
     S[store] = S[store].filter(x => !ids.includes(x.id));
+    addTombs(store, ids, nowIso());
     markDirty();
     return write(store, [], ids);
+  }
+  // A new Larder row's id comes from what it is and where, so two shared phones adding to the same spot make one row.
+  function larderId(r) {
+    const id = (isPortion(r) ? `portion-${r.recipeId}-${r.location || ''}-${r.cookedOn || ''}`
+      : `larder-${r.ingredientId}-${r.location || ''}-${r.flavour || ''}-${norm(1, r.unit).unit}`).replace(/\s+/g, '_').slice(0, 100);
+    return byId('pantryItems', id) ? uuid() : id;
+  }
+  // Deletions are remembered for 60 days ({store: {id: when}}), on this device, so a shared phone's older copy of a
+  // deleted record doesn't bring it back. Shared with the other phone in this phone's household file.
+  const TOMB_DAYS = 60;
+  let tombCache = null;
+  function tombs() {
+    if (!tombCache) { try { tombCache = JSON.parse(localStorage.getItem(LS + 'tombs') || '{}'); } catch (e) { tombCache = {}; } }
+    return tombCache;
+  }
+  function saveTombs() {
+    const cut = Date.now() - TOMB_DAYS * 86400000, t = tombs();
+    for (const s of Object.keys(t)) { for (const id of Object.keys(t[s])) if (!(Date.parse(t[s][id]) > cut)) delete t[s][id]; if (!Object.keys(t[s]).length) delete t[s]; }
+    try { localStorage.setItem(LS + 'tombs', JSON.stringify(t)); } catch (e) { /* ignore */ }
+  }
+  const tombAt = (store, id) => { const v = (tombs()[store] || {})[id]; return v ? Date.parse(v) || 0 : 0; };
+  function addTombs(store, ids, at) {
+    if (store === 'settings' || !ids.length) return;
+    const t = tombs(), m = t[store] || (t[store] = {}), ms = Date.parse(at);
+    ids.forEach(id => { if (!(tombAt(store, id) >= ms)) m[id] = at; });
+    saveTombs();
+  }
+  function unTomb(store, ids) {
+    const m = tombs()[store];
+    if (!m || !ids.some(id => m[id])) return;
+    ids.forEach(id => delete m[id]);
+    saveTombs();
   }
   const byId = (store, id) => S[store].find(x => x.id === id);
   const ingByName = name => S.ingredients.find(i => i.name.trim().toLowerCase() === String(name).trim().toLowerCase());
@@ -156,7 +192,8 @@
   const templates = () => S.weekPlans.filter(p => p.templateName).sort((a, b) => a.templateName.localeCompare(b.templateName));
   function blankPlan(weekStart) {
     return {
-      weekStart, days: Array.from({ length: 7 }, (_, i) => {
+      // A fixed id per week, so two shared phones that each start the same week make one plan, not two.
+      id: 'week-' + weekStart, weekStart, days: Array.from({ length: 7 }, (_, i) => {
         const date = addDays(weekStart, i);
         return { date, training: defaultTraining(date), slots: {} };
       }),
@@ -493,13 +530,16 @@
       const ing = byId('ingredients', n.ingredientId) || {}, key = n.ingredientId + '|' + n.unit, prev = oldGen.get(key);
       oldGen.delete(key);
       if (prev && prev.checked) continue;          // bought: leave it alone
-      const pk = packInfo(ing, n.qty, n.unit);
-      items.push(Object.assign(prev || { checked: false }, {
+      const pk = packInfo(ing, n.qty, n.unit), was = prev && JSON.stringify(prev);
+      // A new line's id comes from its week, ingredient and unit, so two shared phones make the same line.
+      const line = Object.assign(prev || { id: `gen-${week}-${n.ingredientId}-${n.unit}`.slice(0, 100), checked: false }, {
         weekStart: week, ingredientId: n.ingredientId, text: null, qty: n.qty, unit: n.unit,
         needGross: n.gross, larderQty: n.larder, packs: pk ? pk.packs : null, buyQty: pk ? pk.buyQty : null, buyUnit: pk ? pk.buyUnit : null,
         price: estimatePrice(ing, pk), store: ing.store || '', aisle: ing.aisle || '', isLocal: !!ing.isLocal, manual: false,
         forRecipes: [...n.recipes, ...(n.keepShort > 0 ? [keepLabel(ing)] : [])].join(', '), keepShort: n.keepShort || 0,
-      }));
+      });
+      // Unchanged lines keep their timestamp: a regenerate on one phone mustn't undo a tick made on the other.
+      if (JSON.stringify(line) !== was) items.push(line);
     }
     // Earlier weeks' unbought lines: generated ones are covered above, hand-added ones move here (once).
     const earlier = S.shoppingItems.filter(i => i.weekStart < week && !i.checked);
@@ -1090,8 +1130,19 @@
     return {
       kind: d.kind === 'patch' ? 'patch' : 'export', patchId: d.patchId || null,
       note: isStr(d.note) ? d.note.slice(0, 500) : '', author: isStr(d.author) ? d.author.slice(0, 50) : '', ups, dels,
-      exportedAt: isStr(d.exportedAt) ? d.exportedAt : '',
+      exportedAt: isStr(d.exportedAt) ? d.exportedAt : '', household: d.kind == null ? householdPart(d.household) : null,
     };
+  }
+  // A household file is a full export plus who wrote it and what that phone deleted: {deviceId, who, deleted}.
+  function householdPart(h) {
+    if (!isObj(h) || !isStr(h.deviceId) || !h.deviceId) return null;
+    const deleted = {};
+    for (const [store, m] of Object.entries(isObj(h.deleted) ? h.deleted : {})) {
+      if (!STORES.includes(store) || store === 'settings' || !isObj(m)) continue;
+      const ok = Object.entries(m).filter(([id, at]) => id.length <= 100 && isStr(at) && Date.parse(at) > 0);
+      if (ok.length) deleted[store] = Object.fromEntries(ok.slice(0, MAX_RECORDS));
+    }
+    return { deviceId: h.deviceId.slice(0, 100), who: isStr(h.who) ? h.who.trim().slice(0, 40) : '', deleted };
   }
   // Merge rule: a record is taken when it's new, or when its updatedAt is later than the copy here.
   function planMerge(inc) {
@@ -1113,20 +1164,23 @@
     out.summary = (out.counts.join(', ') || 'Nothing to change') + (older ? ` (${older} already up to date here)` : '');
     return out;
   }
-  async function applyMerge(plan) {
+  // opts.shared: the changes came from the other phone in the household (so they aren't sent straight back).
+  async function applyMerge(plan, opts = {}) {
     for (const [store, list] of Object.entries(plan.ups)) {
       for (const r of list) { const i = S[store].findIndex(x => x.id === r.id); if (i < 0) S[store].push(r); else S[store][i] = r; }
+      unTomb(store, list.map(r => r.id));
       await write(store, list);
     }
     for (const [store, ids] of Object.entries(plan.dels)) {
       S[store] = S[store].filter(x => !ids.includes(x.id));
+      if (!opts.shared) addTombs(store, ids, nowIso());
       await write(store, [], ids);
     }
     settings = S.settings.find(x => x.id === 'settings');
     settings.reminderTimes = { ...DEFAULT_SETTINGS.reminderTimes, ...(settings.reminderTimes || {}) };
     if (!Array.isArray(settings.locations)) settings.locations = [...DEFAULT_SETTINGS.locations];
     await normLogs();
-    if (plan.changes) markDirty();
+    if (plan.changes) markDirty(opts);
   }
 
   async function importFile(file) {
@@ -1210,7 +1264,7 @@
   }
   // On open: if the sign-in has lapsed, try to renew it without asking, then sync.
   function quietSignIn() {
-    if (signedIn() || !driveReady() || !navigator.onLine || !dget().hint) return;
+    if (signedIn() || !syncReady() || !navigator.onLine || !dget().hint) return;
     loadGis().then(() => signIn(true)).then(() => { renderDriveChip(); syncNow(); }, () => renderDriveChip());
   }
   function signOut() {
@@ -1496,8 +1550,14 @@
   }
 
   // Data changed: write the outbox about a minute later (or sooner if the app goes to the background).
-  function markDirty() {
-    if (!driveReady() || isViewer()) return;
+  function markDirty(opts = {}) {
+    if (hhReady() && !opts.shared) {
+      hh.rev++;
+      if (!dget().hhDirty) dset({ hhDirty: true });
+      clearTimeout(hhTimer);
+      hhTimer = setTimeout(flushHousehold, HH_DELAY);
+    }
+    if (!driveReady() || isViewer()) { renderDriveChip(); return; }
     if (!dget().dirty) dset({ dirty: true });
     clearTimeout(outboxTimer);
     outboxTimer = setTimeout(flushOutbox, OUTBOX_DELAY);
@@ -1511,9 +1571,137 @@
     catch (e) { drive.error = 'Saving to Drive: ' + e.message; outboxTimer = setTimeout(flushOutbox, 5 * OUTBOX_DELAY); }
     finally { drive.busy = false; renderDriveChip(); }
   }
+  // ---------- Household: two phones sharing one plan ----------
+  // A Drive folder shared between two people. Each phone writes only its own file (household-<device>.json: everything
+  // on the phone, plus what it deleted) and reads the others'. drive.file can't write a file another person's copy of
+  // the app made, which is why it's one file each. For each record the newest updatedAt wins; a deletion wins over
+  // any older copy. Brad's Claude mailbox (inbox/outbox) is separate and works alongside it.
+  const HH_FOLDER = 'Meal Planner shared', HH_RE = /^household-[\w-]+\.json$/, HH_DELAY = 4000, HH_POLL = 20000;
+  const hh = { busy: false, error: '', rev: 0, lastPull: 0 };
+  let hhTimer = null;
+  const hhReady = () => { const d = dget(); return !!(CLIENT_ID && !d.viewer && FOLDER_RE.test(d.hhId || '')); };
+  const syncReady = () => driveReady() || hhReady();
+  function deviceId() {
+    let id = dget().deviceId;
+    if (!id) { id = uuid().replace(/-/g, '').slice(0, 16); dset({ deviceId: id }); }
+    return id;
+  }
+  const hhWho = () => (dget().hhWho || '').trim();
+  function householdJson() {
+    saveTombs();
+    return JSON.stringify({
+      app: 'meal-planner', schemaVersion: SCHEMA_VERSION, appVersion: APP_VERSION, exportedAt: nowIso(),
+      description: "One phone's copy of a shared Meal Planner household. Each phone writes its own file and reads the others'.",
+      household: { deviceId: deviceId(), who: hhWho(), deleted: tombs() },
+      stores: Object.fromEntries(STORES.map(s => [s, S[s]])),
+    });
+  }
+  async function flushHousehold() {
+    clearTimeout(hhTimer);
+    const d = dget();
+    if (!d.hhDirty || !hhReady() || !signedIn() || !navigator.onLine) return;
+    if (hh.busy) { hhTimer = setTimeout(flushHousehold, HH_DELAY); return; }
+    hh.busy = true; renderDriveChip();
+    const rev = hh.rev;
+    try {
+      const id = await saveDriveFile(d.hhId, `household-${deviceId()}.json`, householdJson(), d.hhFile);
+      dset({ hhFile: id, hhWrite: nowIso(), ...(rev === hh.rev ? { hhDirty: false } : {}) });
+      hh.error = '';
+      if (rev !== hh.rev) hhTimer = setTimeout(flushHousehold, HH_DELAY);   // changed while saving
+    } catch (e) { hh.error = 'Sharing: ' + e.message; hhTimer = setTimeout(flushHousehold, 60000); }
+    finally { hh.busy = false; renderDriveChip(); }
+  }
+  // Takes from another phone's file whatever is newer than this phone's copy. Returns how many records changed.
+  async function mergeHousehold(inc) {
+    const plan = { ups: {}, dels: {}, changes: 0 }, gone = inc.household.deleted;
+    for (const [store, list] of Object.entries(inc.ups)) {
+      const fresh = list.filter(r => {
+        const t = tsOf(r), cur = byId(store, r.id);
+        if (tombAt(store, r.id) >= t || Date.parse((gone[store] || {})[r.id] || '') >= t) return false;   // deleted since
+        return !cur || t > tsOf(cur);
+      });
+      if (fresh.length) plan.ups[store] = fresh;
+    }
+    for (const [store, m] of Object.entries(gone)) {
+      for (const [id, at] of Object.entries(m)) {
+        const t = Date.parse(at), cur = byId(store, id);
+        if (cur && tsOf(cur) <= t && !(plan.ups[store] || []).some(r => r.id === id)) (plan.dels[store] || (plan.dels[store] = [])).push(id);
+      }
+    }
+    // Remember the other phone's deletions with their own times, so a third copy can't bring them back either.
+    for (const [store, m] of Object.entries(gone)) {
+      const t = tombs(), here = t[store] || (t[store] = {});
+      for (const [id, at] of Object.entries(m)) if (!(tombAt(store, id) >= Date.parse(at))) here[id] = at;
+    }
+    saveTombs();
+    plan.changes = Object.values(plan.ups).reduce((n, l) => n + l.length, 0) + Object.values(plan.dels).reduce((n, l) => n + l.length, 0);
+    if (plan.changes) await applyMerge(plan, { shared: true });
+    return plan.changes;
+  }
+  // Reads the other phones' files that have changed since last time.
+  async function pullHousehold(force) {
+    const d = dget(), seen = d.hhSeen || {}, peers = d.hhPeers || {}, who = [];
+    const files = (await listFolder(d.hhId)).filter(f => HH_RE.test(f.name) && f.id !== d.hhFile);
+    for (const f of files) {
+      if (!force && seen[f.id] === f.modifiedTime) continue;
+      if (Number(f.size) > MAX_FILE_BYTES) { hh.error = `${f.name} is too large`; continue; }
+      try {
+        const inc = parseIncoming(await (await api(`${DRIVE_API}/files/${f.id}?alt=media`)).text());
+        seen[f.id] = f.modifiedTime;
+        if (!inc.household || inc.household.deviceId === deviceId()) continue;
+        peers[f.id] = { who: inc.household.who, at: inc.exportedAt || f.modifiedTime };
+        if (await mergeHousehold(inc)) who.push(inc.household.who || 'the other phone');
+      } catch (e) { if (e.status === 401) throw e; hh.error = `Reading ${peers[f.id] ? peers[f.id].who || f.name : f.name}: ${e.message}`; }
+    }
+    for (const id of Object.keys(seen)) if (!files.some(f => f.id === id)) { delete seen[id]; delete peers[id]; }
+    dset({ hhSeen: seen, hhPeers: peers, hhLast: nowIso() });
+    hh.lastPull = Date.now();
+    return [...new Set(who)];
+  }
+  // Pull the other phone's changes, then save this phone's. Re-draws the screen unless something is being typed.
+  async function hhSync(opts = {}) {
+    if (!hhReady() || !signedIn() || !navigator.onLine || hh.busy) return [];
+    hh.busy = true; renderDriveChip();
+    let who = [], failed = false;
+    try { hh.error = ''; who = await pullHousehold(opts.force); }
+    catch (e) { hh.error = 'Sharing: ' + e.message; failed = true; }
+    finally { hh.busy = false; }
+    if (!failed) await flushHousehold();
+    renderDriveChip();
+    const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (who.length && !ui.modal && !typing) render();
+    if (opts.report) toast(hh.error || (who.length ? `Updated from ${who.join(' and ')}` : 'Shared: up to date'));
+    return who;
+  }
+
+  // Finds the shared folder, in this person's Drive or shared with them.
+  async function findHousehold() {
+    const q = `name = '${HH_FOLDER}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const files = (await (await api(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=${encodeURIComponent('files(id,name,modifiedTime)')}&pageSize=20`)).json()).files || [];
+    const f = files.filter(x => FOLDER_RE.test(x.id)).sort((a, b) => String(b.modifiedTime).localeCompare(String(a.modifiedTime)))[0];
+    return f ? f.id : null;
+  }
+  function startSharing(folderId, owner) {
+    clearTimeout(hhTimer);
+    dset({ hhId: folderId, hhFile: null, hhSeen: {}, hhPeers: {}, hhDirty: true, hhOwner: owner });
+    hh.error = '';
+    if (!hhWho()) toast('Add your name, so the other phone knows who changed things', 5000);
+    render(); renderDriveChip();
+    loadGis().catch(() => {});
+    if (signedIn()) hhSync({ force: true, report: true }).then(() => { if (!ui.modal) render(); });
+  }
+  // Runs fn once signed in to Google (signing in first if needed); errors become a toast.
+  function withSignIn(fn) {
+    const go = () => Promise.resolve().then(fn).catch(e => { toast(e.message); render(); });
+    if (signedIn()) return go();
+    signIn().then(go, e => { if (!/Loading/.test(e.message)) toast(e.message); });
+  }
+
   // Check the inbox and catch up the outbox. Quiet unless something needs attention.
   async function syncNow(opts = {}) {
-    if (!driveReady() || !signedIn() || !navigator.onLine || drive.busy) return;
+    if (!syncReady() || !signedIn() || !navigator.onLine) return;
+    if (hhReady()) await hhSync({ force: opts.force, report: opts.report && !driveReady() });
+    if (!driveReady() || drive.busy) return;
     if (isViewer()) {
       drive.busy = true; renderDriveChip();
       let changed = false;
@@ -1558,10 +1746,19 @@
   function renderDriveChip() {
     const el = $('#drive-chip');
     if (!el) return;
-    if (!driveReady()) { el.hidden = true; return; }
+    if (!syncReady()) { el.hidden = true; return; }
     el.hidden = false;
     const d = dget(), n = drive.pending.length;
     let text, cls = '';
+    if (!driveReady()) {   // sharing only (no Claude mailbox on this phone)
+      if (hh.busy) text = 'Syncing…';
+      else if (!signedIn()) { text = 'Shared: sign in'; cls = 'warn'; }
+      else if (hh.error) { text = 'Shared ⚠'; cls = 'warn'; }
+      else text = d.hhDirty ? 'Shared •' : 'Shared ✓';
+      el.textContent = text; el.className = 'drive-chip ' + cls;
+      el.title = hh.error || (d.hhDirty ? 'Changes waiting to share' : 'In step with the shared folder');
+      return;
+    }
     if (isViewer()) {
       const at = d.viewExportedAt ? new Date(d.viewExportedAt) : null;
       const stamp = !at ? 'not loaded' : ymd(at) === todayStr()
@@ -1577,10 +1774,10 @@
     if (drive.busy) text = 'Syncing…';
     else if (!signedIn()) { text = 'Drive: sign in'; cls = 'warn'; }
     else if (n) { text = `Inbox ${n}`; cls = 'alert'; }
-    else if (drive.error) { text = 'Drive ⚠'; cls = 'warn'; }
-    else text = d.dirty ? 'Drive •' : 'Drive ✓';
+    else if (drive.error || hh.error) { text = 'Drive ⚠'; cls = 'warn'; }
+    else text = d.dirty || d.hhDirty ? 'Drive •' : 'Drive ✓';
     el.textContent = text; el.className = 'drive-chip ' + cls;
-    el.title = drive.error || (d.dirty ? 'Changes waiting to save to Drive' : 'Drive up to date');
+    el.title = drive.error || hh.error || (d.dirty || d.hhDirty ? 'Changes waiting to save to Drive' : 'Drive up to date');
   }
 
   // ---------- rendering helpers ----------
@@ -2097,6 +2294,7 @@
       <div class="card edit-only"><h3>Larder locations</h3>
         ${field('One per line, in the order you want them shown', `<textarea rows="6" data-setting="locations">${esc(settings.locations.join('\n'))}</textarea>`)}</div>
       ${driveCard()}
+      ${sharingCard()}
       <div class="card"><h3>Data</h3>
         <p class="muted">${isViewer() ? "This device shows a copy of the phone's data." : 'Everything lives on this phone. Export now and then as a backup, and before changing phones.'}</p>
         <button class="btn primary wide" data-action="export">Export (JSON + CSV)</button>
@@ -2135,6 +2333,33 @@
           ${signedIn() ? `<button class="btn" data-action="drive-write">Save outbox now</button><button class="btn ghost" data-action="drive-signout">Sign out</button>` : ''}</div>`
         : `<button class="btn primary wide" data-action="drive-find">Find my folders in Drive</button><p class="muted">Signs in to Google and looks for <b>meal-planner-data</b>. Or paste both folder IDs (or the folders' Drive links) above.</p>`}
     </div>`;
+  }
+
+  // Sharing with someone: two phones, one plan (see Household above).
+  function sharingCard() {
+    if (!CLIENT_ID || isViewer()) return '';
+    const d = dget(), when = iso => (iso ? `${fmtDate(ymd(new Date(iso)))} ${new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}` : 'never');
+    const name = field('Your name', `<input type="text" autocomplete="off" data-hh="hhWho" placeholder="Shown on the other phone" value="${esc(d.hhWho || '')}">`);
+    if (!hhReady()) {
+      return `<div class="card"><h3>Share with someone</h3>
+        <p class="muted">Two phones, one plan: meals, the shopping list and the larder stay in step through a shared Drive folder.</p>
+        <div class="row">${name}</div>
+        <button class="btn primary wide" data-action="hh-find">Find our shared folder</button>
+        <button class="btn wide" data-action="hh-create">Start a shared folder</button>
+        <div class="row">${field('Or paste the folder link', `<input type="text" autocomplete="off" spellcheck="false" data-hh="hhId" value="">`)}</div>
+        ${hint('One of you starts the folder and invites the other, who then taps Find.')}
+        ${hh.error ? `<p class="warn-text">${esc(hh.error)}</p>` : ''}</div>`;
+    }
+    const peers = Object.values(d.hhPeers || {}), last = peers.map(x => x.at).sort().pop();
+    return `<div class="card"><h3>Shared</h3>
+      <div class="row">${name}</div>
+      <p class="muted">${peers.length ? `With ${peers.map(x => esc(x.who || 'another phone')).join(' and ')} · their last change ${when(last)}` : 'Waiting for the other phone to join.'}
+        · checked ${when(d.hhLast)}${d.hhDirty ? ' · <b>changes waiting</b>' : ''}</p>
+      ${hh.error ? `<p class="warn-text">${esc(hh.error)}</p>` : ''}
+      ${d.hhOwner ? `<div class="row">${field('Invite by email', `<input type="email" autocomplete="off" spellcheck="false" data-hh-email placeholder="Their Google account" value="${esc(ui.hhEmail || '')}">`)}</div>
+        <button class="btn wide" data-action="hh-invite">Invite</button>` : ''}
+      <button class="btn primary wide" data-action="hh-sync">${signedIn() ? 'Sync now' : 'Sign in and sync'}</button>
+      <div class="sheet-foot"><span>${delLink('hh-stop', 'Stop sharing')}</span><span></span></div></div>`;
   }
 
   // ---------- modals ----------
@@ -3002,6 +3227,39 @@
     },
     'drive-write'() { dset({ dirty: true }); flushOutbox().then(() => { toast(drive.error || 'Saved to Drive'); render(); }); },
     'drive-signout'() { signOut(); toast('Signed out of Google'); render(); renderDriveChip(); },
+    'hh-find'() {
+      withSignIn(async () => {
+        const id = await findHousehold();
+        if (!id) { toast(`No "${HH_FOLDER}" folder found. Has the other person invited you yet?`, 5000); return; }
+        startSharing(id, false);
+      });
+    },
+    'hh-create'() {
+      withSignIn(async () => {
+        const r = await api(`${DRIVE_API}/files?fields=id`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: HH_FOLDER, mimeType: 'application/vnd.google-apps.folder' }) });
+        startSharing((await r.json()).id, true);
+      });
+    },
+    'hh-invite'() {
+      const email = String(ui.hhEmail || '').trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Enter their email address');
+      withSignIn(async () => {
+        try {
+          await api(`${DRIVE_API}/files/${dget().hhId}/permissions?sendNotificationEmail=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'user', role: 'writer', emailAddress: email }) });
+          ui.hhEmail = ''; render();
+          toast(`Invited ${email}. On their phone: Settings → Find our shared folder`, 6000);
+        } catch (e) { toast(`Couldn't invite: ${e.message}. Share "${HH_FOLDER}" from the Drive app instead.`, 6000); }
+      });
+    },
+    'hh-sync'() { withSignIn(() => hhSync({ force: true, report: true }).then(() => render())); },
+    'hh-stop'() {
+      if (!confirm("Stop sharing on this phone?\n\nEverything stays on this phone, and the other phone keeps its copy. Changes just stop going between them.")) return;
+      clearTimeout(hhTimer);
+      dset({ hhId: '', hhFile: null, hhSeen: {}, hhPeers: {}, hhDirty: false, hhOwner: false });
+      hh.error = ''; render(); renderDriveChip(); toast('Stopped sharing');
+    },
     async 'inbox-apply'(el) {
       const item = drive.pending[Number(el.dataset.i)];
       if (!item || item.error) return;
@@ -3150,6 +3408,15 @@
   document.addEventListener('change', e => {
     const el = e.target;
     if (el.dataset.change === 'import' && el.files[0]) { importFile(el.files[0]); el.value = ''; return; }
+    if (el.dataset.hh) {
+      if (el.dataset.hh === 'hhWho') { dset({ hhWho: el.value.trim().slice(0, 40) }); if (hhReady()) { dset({ hhDirty: true }); flushHousehold(); } return; }
+      const v = el.value.trim().replace(/^.*\/folders\//, '').replace(/[?#].*$/, '');
+      if (!v) return;
+      if (!FOLDER_RE.test(v)) { toast("That doesn't look like a Drive folder link"); return; }
+      startSharing(v, false);
+      return;
+    }
+    if (el.dataset.hhEmail != null) { ui.hhEmail = el.value.trim(); return; }
     if (el.dataset.drive) {
       const v = el.value.trim().replace(/^.*\/folders\//, '').replace(/[?#].*$/, '');   // accept a pasted folder link too
       if (v && !FOLDER_RE.test(v)) { toast("That doesn't look like a Drive folder ID"); return; }
@@ -3193,17 +3460,18 @@
     onField(e);
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { flushOutbox(); return; }
+    if (document.hidden) { flushOutbox(); flushHousehold(); return; }
     const t = todayStr();
     if (t !== ui.today) { if (ui.date === ui.today) ui.date = t; ui.today = t; if (!ui.modal) render(); }
     checkReminders();
     if (!signedIn()) quietSignIn();
     else if (Date.now() - drive.lastCheck > 5 * 60000) syncNow();
+    else if (hhReady()) hhSync();
     else if (nowDocDue()) { dset({ dirty: true }); flushOutbox(); }
     renderDriveChip();
   });
   window.addEventListener('online', () => syncNow());
-  window.addEventListener('pagehide', () => flushOutbox());
+  window.addEventListener('pagehide', () => { flushOutbox(); flushHousehold(); });
 
   // ---------- start ----------
   (async () => {
@@ -3220,11 +3488,13 @@
     render();
     renderDriveChip();
     // Google's sign-in script is only fetched once Drive has been set up on this device.
-    if (driveReady() && navigator.onLine) loadGis().then(quietSignIn, () => {});
+    if (syncReady() && navigator.onLine) loadGis().then(quietSignIn, () => {});
     checkReminders();
     setInterval(checkReminders, 30000);
     setInterval(renderDriveChip, 60000);
     setInterval(() => { if (isViewer() && !document.hidden) syncNow(); }, 5 * 60000);
+    // A shared household checks the other phone's file every 20 seconds while the app is open.
+    setInterval(() => { if (hhReady() && !document.hidden && Date.now() - hh.lastPull >= HH_POLL - 1000) { if (signedIn()) hhSync(); else quietSignIn(); } }, HH_POLL);
     if (!TEST && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
     if (TEST) {
       window.__mp = {

@@ -121,13 +121,13 @@
 
   // Fake Google sign-in and Drive inside the app's frame. Any other network call is recorded as unexpected.
   function fakeDrive(c, files = []) {
-    const w = c.w, fs = { files: {}, n: 0, writes: [], unexpected: [] };
-    const add = (parent, name, text, ownedByApp = false) => {
-      const id = 'f' + (++fs.n);
-      fs.files[id] = { id, name, parent, text, mod: new Date(Date.now() + fs.n).toISOString(), ownedByApp };
+    const w = c.w, fs = { files: {}, n: 0, writes: [], unexpected: [], perms: [] };
+    const add = (parent, name, text, ownedByApp = false, id = null, folder = false) => {
+      id = id || 'file' + String(++fs.n).padStart(8, '0');
+      fs.files[id] = { id, name, parent, text, mod: new Date(Date.now() + Object.keys(fs.files).length).toISOString(), ownedByApp, folder };
       return id;
     };
-    files.forEach(f => add(f.parent, f.name, typeof f.text === 'string' ? f.text : JSON.stringify(f.text), !!f.ownedByApp));
+    files.forEach(f => add(f.parent, f.name, f.folder ? '' : typeof f.text === 'string' ? f.text : JSON.stringify(f.text), !!f.ownedByApp, f.id, !!f.folder));
     w.google = { accounts: { oauth2: {
       initTokenClient: cfg => ({ requestAccessToken: () => setTimeout(() => cfg.callback({ access_token: 'fake-token', expires_in: 3600 }), 10) }),
       hasGrantedAllScopes: () => true,
@@ -150,7 +150,17 @@
           return json({ files: Object.values(fs.files).filter(f => f.parent === m[1])
             .map(f => ({ id: f.id, name: f.name, size: String(f.text.length), modifiedTime: f.mod, mimeType: 'application/json' })) });
         }
+        if ((m = q.match(/name = '([^']+)' and mimeType = 'application\/vnd.google-apps.folder'/))) {
+          return json({ files: Object.values(fs.files).filter(f => f.folder && f.name === m[1] && f.parent !== 'TRASH').map(f => ({ id: f.id, name: f.name, modifiedTime: f.mod })) });
+        }
         return json({ files: [] });
+      }
+      if (u.pathname === '/drive/v3/files' && opts.method === 'POST') {   // a new folder
+        const meta = JSON.parse(opts.body), id = add(null, meta.name, '', true, null, true);
+        fs.writes.push('create folder ' + meta.name); return json({ id });
+      }
+      if ((m = u.pathname.match(/^\/drive\/v3\/files\/(\w+)\/permissions$/)) && opts.method === 'POST') {
+        const b = JSON.parse(opts.body); fs.perms.push(`${m[1]} ${b.role} ${b.emailAddress}`); return json({ id: 'perm1' });
       }
       if ((m = u.pathname.match(/^\/drive\/v3\/files\/(\w+)$/)) && u.searchParams.get('alt') === 'media') return new w.Response(fs.files[m[1]].text);
       if ((m = u.pathname.match(/^\/drive\/v3\/files\/(\w+)$/)) && opts.method === 'PATCH') {
@@ -175,7 +185,7 @@
     fs.json = name => { const f = fs.find(name); return f ? JSON.parse(f.text) : null; };
     return fs;
   }
-  const INBOX = 'INBOXfolder00001', OUTBOX = 'OUTBOXfolder0001';
+  const INBOX = 'INBOXfolder00001', OUTBOX = 'OUTBOXfolder0001', SHARED = 'SHAREDfolder0001';
 
   // ---------- checks ----------
   function checker() {
@@ -1301,6 +1311,84 @@
     t.eq('No calls outside the fake Drive', fs.unexpected, []);
   });
 
+  scenario('Two phones: a shared household folder keeps both in step (2.20.0)', async (c, t) => {
+    const OLD = new Date(Date.now() - 3600000).toISOString(), LATER = new Date(Date.now() + 60000).toISOString();
+    const rice = mk('i1', { name: 'Rice', defaultUnit: 'g', store: 'Supermarket', aisle: '', isLocal: false, lastPrice: null });
+    const curry = name => ({ name, servings: 1, proteinPerServingG: 30, lactose: 'none', tags: [], method: '', ingredients: [{ ingredientId: 'i1', qty: 2000, unit: 'g' }] });
+    await c.importJson(patch({ ingredients: [rice],
+      recipes: [mk('r1', curry('Curry')), mk('r2', { name: 'Old recipe', servings: 1, proteinPerServingG: 10, lactose: 'none', tags: [], method: '', ingredients: [] })],
+      weekPlans: [weekPlan('lastwk', -1, { 6: { dinner: [{ id: 'd1', recipeId: 'r1', servings: 1, cook: null }] } })],
+      shoppingItems: [mk('s1', { weekStart: day(0), ingredientId: null, text: 'Bin bags', qty: 1, unit: 'pack', manual: true, checked: false })] }));
+    // Sam's phone, already in the shared folder: some changes newer than ours, one older, and one deletion.
+    const sam = (extra = {}) => ({ app: 'meal-planner', schemaVersion: 1, exportedAt: LATER,
+      household: { deviceId: 'samphone0001', who: 'Sam', deleted: { shoppingItems: { s1: LATER } } },
+      stores: {
+        recipes: [mk('r1', { ...curry("Curry (Sam's way)"), updatedAt: LATER }),
+          mk('r2', { name: 'Old recipe (stale copy)', servings: 1, proteinPerServingG: 10, lactose: 'none', tags: [], method: '', ingredients: [], updatedAt: OLD })],
+        shoppingItems: [mk('s2', { weekStart: day(0), ingredientId: null, text: 'Milk', qty: 2, unit: 'L', manual: true, checked: false, updatedAt: LATER }), ...(extra.shop || [])],
+      } });
+    const fs = fakeDrive(c, [{ id: SHARED, name: 'Meal Planner shared', folder: true }, { parent: SHARED, name: 'household-samphone0001.json', text: sam() }]);
+    await c.settings();
+    t.has('Settings offers sharing', c.$('#app').innerText, 'Share with someone');
+    await c.set('[data-hh="hhWho"]', 'Alex');
+    await c.click('[data-action="hh-find"]', 1500);
+    t.has("Found the folder and took in Sam's changes", c.toast(), 'Updated from Sam');
+    const recipes = await c.all('recipes');
+    t.eq("Sam's newer edit wins", (recipes.find(r => r.id === 'r1') || {}).name, "Curry (Sam's way)");
+    t.eq("Sam's older copy doesn't overwrite ours", (recipes.find(r => r.id === 'r2') || {}).name, 'Old recipe');
+    const shop = await c.all('shoppingItems');
+    t.ok("Sam's new item came across", shop.some(i => i.text === 'Milk'));
+    t.ok('…and the item Sam deleted is gone here too', !shop.some(i => i.id === 's1'));
+    const mine = Object.values(fs.files).find(f => /^household-(?!samphone)/.test(f.name));
+    t.ok('This phone wrote its own file in the shared folder', mine && mine.parent === SHARED);
+    const my = mine ? JSON.parse(mine.text) : { household: {}, stores: {} };
+    t.eq('…saying who it is', my.household.who, 'Alex');
+    t.ok('…with everything on this phone', (my.stores.recipes || []).some(r => r.name === "Curry (Sam's way)"));
+    t.ok("…and what's been deleted, passing on Sam's deletion too", !!((my.household.deleted || {}).shoppingItems || {}).s1);
+    t.ok("Sam's file is never written", !fs.writes.some(x => x.includes('samphone')), fs.writes);
+    await c.settings();
+    t.has('Settings says who we share with', c.$('#app').innerText, 'With Sam');
+
+    // A deletion here sticks, even though Sam's file still has an old copy.
+    await c.importJson(patch({}, { deletes: { recipes: ['r2'] } }));
+    await c.settings();
+    await c.click('[data-action="hh-sync"]', 1200);
+    t.ok('Our deletion is in our file', !!(((JSON.parse((fs.find((mine || {}).name) || { text: '{"household":{}}' }).text).household.deleted || {}).recipes || {}).r2));
+    const sf = fs.find('household-samphone0001.json');
+    sf.text = JSON.stringify(sam({ shop: [mk('s3', { weekStart: day(0), ingredientId: null, text: 'Eggs', qty: 12, unit: 'each', manual: true, checked: false, updatedAt: new Date(Date.now() + 120000).toISOString() })] }));
+    sf.mod = new Date(Date.now() + 5000).toISOString();
+    await c.click('[data-action="hh-sync"]', 1200);
+    t.ok("Sam's next change arrives", (await c.all('shoppingItems')).some(i => i.text === 'Eggs'));
+    t.ok("…but Sam's stale copy doesn't bring back what we deleted", !(await c.all('recipes')).some(r => r.id === 'r2'));
+
+    // Both phones starting the same week, or generating the same list, make the same records.
+    await c.week(day(0));
+    await c.click('[data-action="copy-last"]', 150);
+    t.ok("A new week's plan has the week's own id", (await c.all('weekPlans')).some(p => p.id === 'week-' + day(0)));
+    await c.click('[data-action="generate"]', 300);
+    const line = (await c.all('shoppingItems')).find(i => i.ingredientId === 'i1' && i.weekStart === day(0));
+    t.ok('A new list line has an id from its week and ingredient', line && line.id === `gen-${day(0)}-i1-g`, line && line.id);
+    await sleep(30);
+    await c.click('[data-action="regenerate"]', 300);
+    const again = (await c.all('shoppingItems')).find(i => i.id === (line || {}).id);
+    t.eq("Regenerating leaves an unchanged line's timestamp alone (so it can't undo Sam's tick)", again && again.updatedAt, line && line.updatedAt);
+    await c.shop(day(0));
+    await c.click(c.shopRow('Rice').querySelector('[data-action="tick"]'), 150);
+    const row = (await c.all('pantryItems')).find(p => p.ingredientId === 'i1');
+    t.ok('Bought rice goes in a larder row named for its spot, so both phones add to the same row', row && row.id.startsWith('larder-i1-'), row && row.id);
+
+    // Stop, then start a new folder and invite someone.
+    await c.settings();
+    await c.click('[data-action="hh-stop"]', 100);
+    t.has('Stopped sharing', c.$('#app').innerText, 'Share with someone');
+    await c.click('[data-action="hh-create"]', 1000);
+    t.ok('Started a new shared folder', fs.writes.includes('create folder Meal Planner shared'), fs.writes);
+    await c.set('[data-hh-email]', 'sam@example.com');
+    await c.click('[data-action="hh-invite"]', 300);
+    t.ok('Invited Sam to it as an editor', fs.perms.some(x => x.endsWith('writer sam@example.com')), fs.perms);
+    t.eq('No calls outside the fake Drive', fs.unexpected, []);
+  });
+
   // ---------- runner ----------
   async function runAll() {
     // Test the files on disk, not an old copy: drop any service worker and offline cache on this (local) origin.
@@ -1311,7 +1399,9 @@
     results.innerHTML = ''; summary.textContent = ''; summary.className = '';
     let pass = 0, fail = 0;
     const out = [];
-    for (const sc of SCENARIOS) {
+    // tests.html?auto&only=Two%20phones runs just the scenarios whose name contains that text.
+    const only = new URLSearchParams(location.search).get('only');
+    for (const sc of SCENARIOS.filter(x => !only || x.name.toLowerCase().includes(only.toLowerCase()))) {
       status.textContent = 'Running: ' + sc.name;
       const t = checker(), started = Date.now();
       let c;

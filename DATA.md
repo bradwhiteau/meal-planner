@@ -88,6 +88,17 @@ but haven't yet (less what those weeks eat), cover that week's meals of it befor
 
 Units are metric: `g`, `kg`, `ml`, `L`, or a count (`each`, `tin`, `pack`, `bunch`, `loaf`). g/kg and ml/L are summed together on the shopping list.
 
+## Sharing between two phones (since 2.20.0)
+
+A household shares a Drive folder (`Meal Planner shared`). Each phone writes only its own `household-<deviceId>.json`
+(the drive.file scope can't change a file another person's copy of the app made) and reads the others'. That file is a
+full export plus a `household` object: `{deviceId, who, deleted: {store: {id: when}}}`. Merging: a record is taken when
+its `updatedAt` is later than this phone's copy and later than any deletion of it on either phone; a deletion removes a
+record whose `updatedAt` is no later than the deletion. Deletions are kept for 60 days. New week plans have the id
+`week-<weekStart>`, new generated shopping lines `gen-<weekStart>-<ingredientId>-<unit>`, and new larder rows
+`larder-<ingredientId>-<location>-<flavour>-<unit>` or `portion-<recipeId>-<location>-<cookedOn>`, so both phones make
+the same record. Patches written for Brad's phone should still give new records random UUIDs.
+
 ## Writing: patch files in the inbox
 
 Write **only the records you changed**, as a patch. Anything logged on the phone in the meantime is kept.
