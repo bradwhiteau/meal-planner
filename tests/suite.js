@@ -1348,6 +1348,8 @@
     t.ok("Sam's file is never written", !fs.writes.some(x => x.includes('samphone')), fs.writes);
     await c.settings();
     t.has('Settings says who we share with', c.$('#app').innerText, 'With Sam');
+    const kept = JSON.parse(c.w.localStorage.getItem('mpt.tok') || '{}');
+    t.ok('The sign-in is kept on the phone, so reopening the app (iPhones close it often) needs no tap', kept.t === 'fake-token' && kept.exp > Date.now() + 3000000, kept);
 
     // A deletion here sticks, even though Sam's file still has an old copy.
     await c.importJson(patch({}, { deletes: { recipes: ['r2'] } }));

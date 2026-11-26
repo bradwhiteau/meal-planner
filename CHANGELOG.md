@@ -2,6 +2,13 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.20.1
+
+- **Stays signed in when you reopen it:** iPhones close a home-screen app soon after you switch away, and Google can't
+  sign in again without a tap, so reopening the app showed **sign in** every time. The sign-in is now kept on the phone
+  until it runs out (Google gives an hour), so reopening within the hour just syncs. After that it's still one tap on
+  the chip.
+
 ## 2.20.0
 
 - **Share with someone:** two phones can now share one plan. Meals, the shopping list, the larder and recipes stay in

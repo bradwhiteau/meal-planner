@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.20.0';
+  const APP_VERSION = '2.20.1';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1197,7 +1197,8 @@
   // ---------- Google Drive mailbox ----------
   // Inbox: patch files (or full exports) written by Claude, read here and applied on request.
   // Outbox: latest.json plus one dated snapshot per day (last 14 kept), written here for Claude to read.
-  // The access token lives in memory only. Folder IDs live on this device, never in the repo.
+  // The access token (good for an hour) is kept on this device, so reopening the app doesn't mean signing in again.
+  // Folder IDs live on this device, never in the repo.
   const CLIENT_ID = (window.MP_CONFIG || {}).googleClientId || '';
   const SCOPES = ['https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/drive.file'];
   const DRIVE_API = 'https://www.googleapis.com/drive/v3', DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
@@ -1205,6 +1206,18 @@
   const SNAPSHOT_RE = /^meal-planner-\d{4}-\d{2}-\d{2}\.json$/;
   const FOLDER_RE = /^[\w-]{10,100}$/;
   const drive = { token: null, expires: 0, pending: [], busy: false, error: '', lastCheck: 0 };
+  // iPhones close a home-screen app soon after you switch away, and won't let Google sign in again without a tap,
+  // so the token is kept (until it runs out) rather than living in memory only.
+  function saveToken() {
+    try {
+      if (drive.token) localStorage.setItem(LS + 'tok', JSON.stringify({ t: drive.token, exp: drive.expires }));
+      else localStorage.removeItem(LS + 'tok');
+    } catch (e) { /* ignore */ }
+  }
+  try {
+    const k = JSON.parse(localStorage.getItem(LS + 'tok') || 'null');
+    if (k && k.t && k.exp > Date.now()) { drive.token = k.t; drive.expires = k.exp; }
+  } catch (e) { /* ignore */ }
   let outboxTimer = null;
 
   // Device-only sync state: folder IDs, applied/skipped files, outbox status.
@@ -1247,7 +1260,7 @@
         callback: r => {
           if (r.error) return rej(new Error(r.error_description || r.error));
           if (!google.accounts.oauth2.hasGrantedAllScopes(r, ...SCOPES)) return rej(new Error('Drive access wasn\'t granted. Tick both boxes when Google asks.'));
-          drive.token = r.access_token; drive.expires = Date.now() + (Number(r.expires_in) || 3600) * 1000; drive.error = '';
+          drive.token = r.access_token; drive.expires = Date.now() + (Number(r.expires_in) || 3600) * 1000; drive.error = ''; saveToken();
           if (!dget().hint) rememberAccount();
           res();
         },
@@ -1272,13 +1285,13 @@
       const body = new URLSearchParams({ token: drive.token });
       fetch('https://accounts.google.com/o/oauth2/revoke', { method: 'POST', mode: 'no-cors', body }).catch(() => {});
     }
-    drive.token = null; drive.expires = 0; drive.pending = [];
+    drive.token = null; drive.expires = 0; drive.pending = []; saveToken();
     dset({ hint: '' });
   }
   async function api(url, opts = {}) {
     if (!signedIn()) throw new Error('Not signed in to Google');
     const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + drive.token } });
-    if (r.status === 401) { drive.token = null; throw new Error('Google sign-in expired'); }
+    if (r.status === 401) { drive.token = null; saveToken(); throw new Error('Google sign-in expired'); }
     if (!r.ok) {
       let msg = `HTTP ${r.status}`;
       try { const j = await r.json(); msg = (j.error && j.error.message) || msg; } catch (e) { /* ignore */ }
