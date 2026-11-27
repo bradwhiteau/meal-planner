@@ -142,6 +142,12 @@ seconds after any change, and when you tap the chip (**Shared ✓**, or **Shared
 to each thing wins, and deleted things stay deleted. If you both change the same thing within a few seconds, only the
 later change is kept. **Stop sharing** leaves everything on both phones; changes just stop going between them.
 
+### Staying signed in (optional sign-in helper)
+
+Google's sign-in in a web app lasts an hour, and on an iPhone renewing it needs a tap. The optional helper in
+`server/` (run on an always-on machine such as Ecto-Server, reached through a Cloudflare Tunnel) keeps each phone
+signed in for good. See `server/SETUP.md`. Without it, everything still works; you just tap the chip to sign in.
+
 ### Reminders
 
 | Reminder | When |

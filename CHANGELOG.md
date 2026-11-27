@@ -2,6 +2,16 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.21.0
+
+- **Sign-in helper (ready, not switched on yet):** a small service for Ecto-Server (`server/`) that keeps each phone
+  signed in to Google for good, so there's no sign-in popup and no "sign in" tap. Each phone signs in through it once:
+  the app goes to Google in the same window and comes straight back. After that it gets fresh access from the helper
+  whenever it needs it. The helper never sees meal planner data; it holds each phone's Google sign-in, encrypted.
+  If it can't be reached, the app says so and uses Google's popup as before. Setup steps: `server/SETUP.md`. It switches
+  on once `authServer` is set in `config.js`.
+- Settings → Data shows whether the helper is in use.
+
 ## 2.20.1
 
 - **Stays signed in when you reopen it:** iPhones close a home-screen app soon after you switch away, and Google can't

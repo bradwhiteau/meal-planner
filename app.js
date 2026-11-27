@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.20.1';
+  const APP_VERSION = '2.21.0';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1244,9 +1244,72 @@
     });
     return gisPromise;
   }
-  // Usually runs straight from a tap: Google's sign-in opens a popup.
+  // ---------- the sign-in helper (optional, on Brad's server; see server/SETUP.md) ----------
+  // With MP_CONFIG.authServer set, each phone signs in to Google through the helper once. After that the app gets
+  // fresh tokens from the helper whenever it needs them: no popup, no tap. If the helper can't be reached, the usual
+  // Google popup is used for the next 10 minutes.
+  const authServer = () => String((window.MP_CONFIG || {}).authServer || '').replace(/\/+$/, '');
+  const authKey = () => { try { return localStorage.getItem(LS + 'authKey') || ''; } catch (e) { return ''; } };
+  function setAuthKey(k) { try { if (k) localStorage.setItem(LS + 'authKey', k); else localStorage.removeItem(LS + 'authKey'); } catch (e) { /* ignore */ } }
+  let helperDownAt = 0, helperNav = null;
+  const useHelper = () => !!authServer() && Date.now() - helperDownAt > 10 * 60000;
+  function gotToken(token, expiresIn) {
+    drive.token = token; drive.expires = Date.now() + (Number(expiresIn) || 3600) * 1000; drive.error = ''; saveToken();
+  }
+  async function helperFetch(path, key) {
+    try { return await fetch(authServer() + path, { method: 'POST', headers: { Authorization: 'Bearer ' + key } }); }
+    catch (e) { helperDownAt = Date.now(); throw new Error("Couldn't reach the sign-in helper: tap again to sign in with Google"); }
+  }
+  async function helperToken() {
+    const r = await helperFetch('/token', authKey());
+    if (r.status === 401) { setAuthKey(''); throw new Error('Your sign-in has lapsed: tap to sign in again'); }
+    if (!r.ok) { helperDownAt = Date.now(); throw new Error('The sign-in helper had a problem: tap again to sign in with Google'); }
+    const j = await r.json();
+    gotToken(j.access_token, j.expires_in);
+  }
+  // Goes (in this window) to the helper, which sends us on to Google and then back here with a one-time code.
+  function helperGo() {
+    const state = Array.from(crypto.getRandomValues(new Uint8Array(24)), b => b.toString(16).padStart(2, '0')).join('');
+    try { localStorage.setItem(LS + 'authState', state); } catch (e) { /* ignore */ }
+    const hint = dget().hint;
+    const url = `${authServer()}/start?state=${state}&return=${encodeURIComponent(location.href.split('#')[0])}`
+      + (hint ? '&hint=' + encodeURIComponent(hint) : '');
+    flushOutbox(); flushHousehold();
+    if (TEST) helperNav = url; else location.href = url;
+  }
+  // Back from Google: swap the one-time code for this phone's key (and a first token).
+  async function helperReturn(hash) {
+    const p = new URLSearchParams(String(hash || '').replace(/^#/, ''));
+    if (!p.has('mp-auth-state')) return;
+    if (!TEST) history.replaceState(null, '', location.href.split('#')[0]);
+    let want = '';
+    try { want = localStorage.getItem(LS + 'authState') || ''; } catch (e) { /* ignore */ }
+    if (!want || p.get('mp-auth-state') !== want) return toast("That sign-in didn't come from this phone. Tap to sign in again.");
+    try { localStorage.removeItem(LS + 'authState'); } catch (e) { /* ignore */ }
+    if (p.get('mp-auth-error')) return toast(p.get('mp-auth-error'));
+    try {
+      const r = await helperFetch('/redeem', p.get('mp-auth-code') || '');
+      if (!r.ok) throw new Error('Sign-in took too long: tap to try again');
+      const j = await r.json();
+      setAuthKey(j.key);
+      if (j.email) dset({ hint: j.email });
+      gotToken(j.access_token, j.expires_in);
+      toast('Signed in. This phone stays signed in now.', 5000);
+      renderDriveChip();
+      if (syncReady()) syncNow();
+      if (ui.view === 'settings' && !ui.modal) render();
+    } catch (e) { toast(e.message); }
+  }
+
+  // Usually runs straight from a tap: Google's sign-in opens a popup (or, with the helper, goes there and back).
   // quiet: try it without a tap (on app open). If the browser blocks the popup, nothing is shown and the chip still works.
   function signIn(quiet) {
+    if (useHelper()) {
+      if (authKey()) return helperToken();
+      if (quiet) return Promise.reject(new Error('quiet'));
+      helperGo();
+      return Promise.reject(new Error('Loading Google sign-in…'));   // the page is leaving; no toast
+    }
     if (!(window.google && google.accounts && google.accounts.oauth2)) {
       if (quiet) return Promise.reject(new Error('quiet'));
       loadGis().then(() => toast('Ready: tap again to sign in'), e => toast(e.message));
@@ -1260,7 +1323,7 @@
         callback: r => {
           if (r.error) return rej(new Error(r.error_description || r.error));
           if (!google.accounts.oauth2.hasGrantedAllScopes(r, ...SCOPES)) return rej(new Error('Drive access wasn\'t granted. Tick both boxes when Google asks.'));
-          drive.token = r.access_token; drive.expires = Date.now() + (Number(r.expires_in) || 3600) * 1000; drive.error = ''; saveToken();
+          gotToken(r.access_token, r.expires_in);
           if (!dget().hint) rememberAccount();
           res();
         },
@@ -1277,14 +1340,16 @@
   }
   // On open: if the sign-in has lapsed, try to renew it without asking, then sync.
   function quietSignIn() {
-    if (signedIn() || !syncReady() || !navigator.onLine || !dget().hint) return;
-    loadGis().then(() => signIn(true)).then(() => { renderDriveChip(); syncNow(); }, () => renderDriveChip());
+    if (signedIn() || !syncReady() || !navigator.onLine || !(dget().hint || (useHelper() && authKey()))) return;
+    (useHelper() && authKey() ? Promise.resolve() : loadGis()).then(() => signIn(true)).then(() => { renderDriveChip(); syncNow(); }, () => renderDriveChip());
   }
   function signOut() {
     if (drive.token) {
       const body = new URLSearchParams({ token: drive.token });
       fetch('https://accounts.google.com/o/oauth2/revoke', { method: 'POST', mode: 'no-cors', body }).catch(() => {});
     }
+    if (authServer() && authKey()) helperFetch('/signout', authKey()).catch(() => {});
+    setAuthKey('');
     drive.token = null; drive.expires = 0; drive.pending = []; saveToken();
     dset({ hint: '' });
   }
@@ -2313,7 +2378,7 @@
         <button class="btn primary wide" data-action="export">Export (JSON + CSV)</button>
         ${canShare() ? `<button class="btn wide" data-action="share">Share export to Drive…</button>` : ''}
         <label class="btn wide edit-only">Import from JSON<input type="file" accept="application/json,.json" data-change="import" hidden></label>
-        <p class="muted">Meal and Shopping Planner ${APP_VERSION} · schema ${SCHEMA_VERSION} · ${S.recipes.length} recipes · ${S.mealLogs.length} meals logged</p></div></div>`;
+        <p class="muted">Meal and Shopping Planner ${APP_VERSION} · schema ${SCHEMA_VERSION} · ${S.recipes.length} recipes · ${S.mealLogs.length} meals logged${authServer() ? ` · sign-in helper ${authKey() ? 'on (stays signed in)' : 'ready (sign in once to use it)'}` : ''}</p></div></div>`;
   }
 
   function driveCard() {
@@ -3501,7 +3566,11 @@
     render();
     renderDriveChip();
     // Google's sign-in script is only fetched once Drive has been set up on this device.
-    if (syncReady() && navigator.onLine) loadGis().then(quietSignIn, () => {});
+    helperReturn(location.hash).then(() => {
+      if (!syncReady() || !navigator.onLine) return;
+      if (useHelper() && authKey()) { quietSignIn(); loadGis().catch(() => {}); }
+      else loadGis().then(quietSignIn, () => {});
+    });
     checkReminders();
     setInterval(checkReminders, 30000);
     setInterval(renderDriveChip, 60000);
@@ -3515,6 +3584,8 @@
         go(date) { ui.modal = null; ui.view = 'today'; ui.date = date; render(); },
         week(weekStart) { ui.modal = null; ui.view = 'week'; ui.week = weekStart; render(); },
         shop(weekStart) { ui.modal = null; ui.view = 'shop'; ui.shopWeek = weekStart; render(); },
+        helperNav: () => helperNav, helperReturn, quietSignIn, signedIn: () => signedIn(),
+        forgetToken() { drive.token = null; drive.expires = 0; saveToken(); },
       };
     }
   })();

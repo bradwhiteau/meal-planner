@@ -1311,6 +1311,76 @@
     t.eq('No calls outside the fake Drive', fs.unexpected, []);
   });
 
+  scenario('Sign-in helper: each phone signs in once, then never needs a popup (2.21.0)', async (c, t) => {
+    c.w.MP_CONFIG.authServer = 'https://auth.test/';
+    const fs = fakeDrive(c, [{ id: SHARED, name: 'Meal Planner shared', folder: true }]);
+    // Google's popup sign-in, counted; and a fake helper in front of the fake Drive.
+    let popups = 0;
+    const gis = c.w.google.accounts.oauth2.initTokenClient;
+    c.w.google.accounts.oauth2.initTokenClient = cfg => { popups++; return gis(cfg); };
+    const calls = [], driveFetch = c.w.fetch;
+    let helperUp = true;
+    c.w.fetch = async (url, opts = {}) => {
+      url = String(url);
+      if (!url.startsWith('https://auth.test/')) return driveFetch(url, opts);
+      if (!helperUp) throw new TypeError('Load failed');
+      const path = new URL(url).pathname, key = ((opts.headers || {}).Authorization || '').slice(7);
+      calls.push(`${path} ${key}`);
+      const json = (o, status = 200) => new c.w.Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
+      if (path === '/redeem') return key === 'once-1' ? json({ key: 'device-key', email: 'alex@example.com', access_token: 'fake-token', expires_in: 3600 }) : json({ error: 'code expired' }, 401);
+      if (path === '/token') return key === 'device-key' ? json({ access_token: 'fake-token', expires_in: 3600 }) : json({ error: 'unknown device' }, 401);
+      if (path === '/signout') return new c.w.Response(null, { status: 204 });
+      return json({}, 404);
+    };
+
+    await c.settings();
+    t.has('Settings says the helper is ready', c.$('#app').innerText, 'sign in once to use it');
+    await c.set('[data-hh="hhWho"]', 'Alex');
+    await c.click('[data-action="hh-find"]', 300);
+    const nav = c.w.__mp.helperNav() || '';
+    t.ok('Signing in goes to the helper (same window, no popup)', nav.startsWith('https://auth.test/start?state='), nav);
+    t.ok('…asking to come back to this page', nav.includes('&return=' + encodeURIComponent(c.w.location.href.split('#')[0])), nav);
+    t.eq('…and no Google popup', popups, 0);
+    const state = new URL(nav || 'https://x/').searchParams.get('state');
+
+    await c.w.__mp.helperReturn('#mp-auth-state=someone-elses&mp-auth-code=once-1');
+    t.has("A sign-in this phone didn't start is ignored", c.toast(), "didn't come from this phone");
+    t.ok('…without collecting its code', !calls.some(x => x.startsWith('/redeem')), calls);
+
+    await c.w.__mp.helperReturn(`#mp-auth-state=${state}&mp-auth-code=once-1`);
+    await sleep(100);
+    t.has('Back from Google: signed in', c.toast(), 'stays signed in');
+    t.eq('…keeping only the helper key on the phone', c.w.localStorage.getItem('mpt.authKey'), 'device-key');
+    t.ok('…and a token to use now', c.w.__mp.signedIn());
+    await c.click('[data-action="hh-find"]', 1200);
+    t.has('Then sharing carries on as before', c.$('#app').innerText, 'Stop sharing');
+
+    // An hour later (or after the phone closed the app): a fresh token comes from the helper, no tap needed.
+    c.w.__mp.forgetToken();
+    c.w.__mp.quietSignIn();
+    await sleep(200);
+    t.ok('When the token runs out, the app quietly gets a new one from the helper', c.w.__mp.signedIn() && calls.includes('/token device-key'), calls);
+    t.eq('…still with no Google popup', popups, 0);
+
+    // The helper is down: the app says so, then falls back to Google's popup.
+    helperUp = false;
+    c.w.__mp.forgetToken();
+    await c.click('#drive-chip', 200);
+    t.has('If the helper is down, the app says so', c.toast(), "Couldn't reach the sign-in helper");
+    await c.click('#drive-chip', 600);
+    t.ok("…and the next tap uses Google's sign-in instead", popups === 1 && c.w.__mp.signedIn(), popups);
+
+    // Signing out tells the helper to forget this phone.
+    helperUp = true;
+    const b = c.w.document.createElement('button');
+    b.dataset.action = 'drive-signout';
+    c.$('#app').appendChild(b);
+    await c.click(b, 200);
+    t.ok('Signing out tells the helper to forget this phone', calls.includes('/signout device-key'), calls);
+    t.eq('…and the key is gone from the phone', c.w.localStorage.getItem('mpt.authKey'), null);
+    t.eq('No calls outside the fakes', fs.unexpected, []);
+  });
+
   scenario('Two phones: a shared household folder keeps both in step (2.20.0)', async (c, t) => {
     const OLD = new Date(Date.now() - 3600000).toISOString(), LATER = new Date(Date.now() + 60000).toISOString();
     const rice = mk('i1', { name: 'Rice', defaultUnit: 'g', store: 'Supermarket', aisle: '', isLocal: false, lastPrice: null });
