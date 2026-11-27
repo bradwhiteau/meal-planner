@@ -122,6 +122,7 @@
   // Fake Google sign-in and Drive inside the app's frame. Any other network call is recorded as unexpected.
   function fakeDrive(c, files = []) {
     const w = c.w, fs = { files: {}, n: 0, writes: [], unexpected: [], perms: [] };
+    w.MP_CONFIG.authServer = '';   // never the real sign-in helper; its own scenario sets a fake one
     const add = (parent, name, text, ownedByApp = false, id = null, folder = false) => {
       id = id || 'file' + String(++fs.n).padStart(8, '0');
       fs.files[id] = { id, name, parent, text, mod: new Date(Date.now() + Object.keys(fs.files).length).toISOString(), ownedByApp, folder };
@@ -1312,8 +1313,8 @@
   });
 
   scenario('Sign-in helper: each phone signs in once, then never needs a popup (2.21.0)', async (c, t) => {
-    c.w.MP_CONFIG.authServer = 'https://auth.test/';
     const fs = fakeDrive(c, [{ id: SHARED, name: 'Meal Planner shared', folder: true }]);
+    c.w.MP_CONFIG.authServer = 'https://auth.test/';
     // Google's popup sign-in, counted; and a fake helper in front of the fake Drive.
     let popups = 0;
     const gis = c.w.google.accounts.oauth2.initTokenClient;

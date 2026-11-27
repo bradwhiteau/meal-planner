@@ -2,6 +2,11 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.21.1
+
+- **Sign-in helper switched on** (`meals.feralservers.au`). On each phone, tap the chip once: the app goes to Google,
+  asks for Drive access (tick both boxes) and comes back. From then on it stays signed in by itself.
+
 ## 2.21.0
 
 - **Sign-in helper (ready, not switched on yet):** a small service for Ecto-Server (`server/`) that keeps each phone
