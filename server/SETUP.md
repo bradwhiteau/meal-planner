@@ -11,8 +11,11 @@ The address below is `meals.feralservers.au`. Any name on the domain works; just
 
 ## 1. Python
 
-Open PowerShell on Ecto-Server and run `python --version`. If it isn't 3.10 or newer, install Python from
-python.org (tick **Add python.exe to PATH**). The helper uses nothing outside Python itself.
+Open PowerShell on Ecto-Server and run `where python`. The helper runs as its own Windows account (step 5),
+so Python must be installed **for all users**: the path should start with `C:\Program Files\`, not
+`C:\Users\...\AppData\`. If it doesn't, or `python --version` is older than 3.10, install Python from python.org.
+Choose **Customize installation**, then tick **Install Python for all users** and **Add Python to environment
+variables**. The helper uses nothing outside Python itself.
 
 ## 2. Put the helper on Ecto-Server
 
@@ -68,18 +71,44 @@ python mp_auth.py
 It should print `Meal Planner sign-in helper on http://127.0.0.1:8790 …`. Open
 <https://meals.feralservers.au/health> on your phone and you should see `ok`. Then press Ctrl+C to stop it.
 
-To have it start with the machine, use Task Scheduler:
+### Its own Windows account
+
+The helper runs as a small account of its own, `mpauth`, not as you. That way it can't touch anything else on
+the machine, and you don't need your own password for any of this. You set `mpauth`'s password fresh here: put it
+in your password manager, because Task Scheduler asks for it once.
+
+In PowerShell **as administrator**:
+
+```powershell
+$pw = Read-Host -AsSecureString "New password for mpauth"
+New-LocalUser -Name mpauth -Password $pw -Description "Meal Planner sign-in helper" -PasswordNeverExpires -UserMayNotChangePassword
+icacls C:\Services\mp-auth /grant "mpauth:(OI)(CI)M"
+icacls C:\Services\mp-auth\mp-auth.config.json /inheritance:r /grant "mpauth:R" /grant "Administrators:F"
+```
+
+The last line means only `mpauth` and administrators can read the file with the client secret. `mpauth` is a
+standard user, not an administrator.
+
+Don't reset your own account's password if you've forgotten it. When an admin resets a password, Windows can
+lose things encrypted for that account, such as saved browser passwords.
+
+### Start with the machine (Task Scheduler)
 
 1. **Create Task** (not Basic Task). Name it `Meal Planner sign-in helper`.
-2. Tick **Run whether user is logged on or not**. Use **your own Windows account**, the same one you tested
-   with, because the stored sign-ins are encrypted to it.
-3. **Triggers:** At startup.
-4. **Actions:** Start a program.
-   - Program: `python` (or the full path from `where python`).
+2. **Change User or Group**, type `mpauth`, then **Check Names** and **OK**.
+3. Tick **Run whether user is logged on or not**. Leave **Run with highest privileges** unticked.
+4. **Triggers:** At startup.
+5. **Actions:** Start a program.
+   - Program: the full path from `where python`, for example `C:\Program Files\Python314\python.exe`.
    - Arguments: `mp_auth.py`.
    - Start in: `C:\Services\mp-auth`.
-5. **Settings:** tick **If the task fails, restart every 1 minute**, and untick **Stop the task if it runs longer than**.
-6. Right-click the task and choose **Run**, then check `/health` again.
+6. **Settings:** tick **If the task fails, restart every 1 minute**, and untick **Stop the task if it runs longer than**.
+7. Click **OK** and type `mpauth`'s password when asked.
+8. Right-click the task and choose **Run**, then check `/health` again.
+
+Sign-ins are encrypted to the `mpauth` account, so sign the phones in only once the task is running (step 6). If
+Windows says `mpauth` needs the **Log on as a batch job** right, open `secpol.msc` and go to **Local Policies → User
+Rights Assignment → Log on as a batch job**, then add `mpauth`.
 
 ## 6. Turn it on in the app
 
