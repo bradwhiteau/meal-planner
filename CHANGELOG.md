@@ -2,6 +2,11 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.21.3
+- The sign-in helper actually works now: the page's security rule (connect-src) didn't list meals.feralservers.au, so
+  the phone's browser blocked every request to it ("Couldn't reach the sign-in helper" after coming back from Google).
+  A test now checks the rule against the address in config.js.
+
 ## 2.21.2
 - Coming back from Google through the sign-in helper, the app tries a few times to collect the sign-in instead of
   giving up on the first dropped connection ("Couldn't reach the sign-in helper" straight after ticking the boxes).

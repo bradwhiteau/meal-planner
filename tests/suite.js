@@ -1314,6 +1314,11 @@
 
   scenario('Sign-in helper: each phone signs in once, then never needs a popup (2.21.0)', async (c, t) => {
     const fs = fakeDrive(c, [{ id: SHARED, name: 'Meal Planner shared', folder: true }]);
+    // 2.21.3: the page's security rule must let it talk to the real helper (the fakes below bypass it).
+    const real = ((await (await fetch('config.js', { cache: 'no-store' })).text()).match(/authServer:\s*'([^']*)'/) || [])[1];
+    const csp = (c.w.document.querySelector('meta[http-equiv="Content-Security-Policy"]') || {}).content || '';
+    const connect = (csp.match(/connect-src([^;]*)/) || [])[1] || '';
+    t.ok("The app page is allowed to reach the sign-in helper in config.js", !real || connect.split(/\s+/).includes(new URL(real).origin), connect);
     c.w.MP_CONFIG.authServer = 'https://auth.test/';
     // Google's popup sign-in, counted; and a fake helper in front of the fake Drive.
     let popups = 0;
