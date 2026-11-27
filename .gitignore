@@ -3,3 +3,4 @@
 *.json
 meal-planner-data/
 __pycache__/
+mp-auth.log*

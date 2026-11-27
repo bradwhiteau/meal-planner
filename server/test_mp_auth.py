@@ -45,6 +45,7 @@ class HelperTest(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.g = FakeGoogle()
         mp_auth.google_post, mp_auth.google_get = self.g.post, self.g.get
+        mp_auth.LOG_FILE = ''
         self.cfg = {'client_id': 'CID', 'client_secret': 'SECRET', 'public_url': 'https://meals.example.au/',
                     'sessions_file': os.path.join(self.dir, 's.json')}
         self.start_server()
@@ -155,6 +156,21 @@ class HelperTest(unittest.TestCase):
         self.assertNotIn('Access-Control-Allow-Origin', h)
         _, h, _ = self.req('/token', 'OPTIONS')
         self.assertEqual(h.get('Access-Control-Allow-Origin'), APP)
+
+    def test_only_one_copy_can_listen(self):
+        # 2.21.1 hour check: two copies shared the port, and the one that never saw the sign-in turned the phone away.
+        first = mp_auth.Server(('127.0.0.1', 0), mp_auth.make_handler(self.helper))
+        try:
+            with self.assertRaises(OSError):
+                mp_auth.Server(('127.0.0.1', first.server_address[1]), mp_auth.make_handler(self.helper)).server_close()
+        finally:
+            first.server_close()
+
+    def test_a_sign_in_saved_by_another_copy_is_found(self):
+        older = mp_auth.Helper(self.cfg)            # loaded before the phone signed in
+        key = self.sign_in()[1]['key']
+        status, body = older.token(key)
+        self.assertEqual(status, 200, body)
 
     def test_seal_round_trip(self):
         s = mp_auth.seal('hello')

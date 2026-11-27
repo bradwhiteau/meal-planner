@@ -129,6 +129,9 @@ by itself.
   <https://myaccount.google.com/permissions>, are forgotten. The app then asks for one tap to sign in again.
 - **Keep Ecto-Server patched.** Anyone who got control of that Windows account could read the Google Drive of
   everyone signed in through it.
-- **The log** prints only sign-ins and sign-outs (by email), never tokens.
+- **The log** is `mp-auth.log` beside `mp_auth.py`. It records starts (and which Windows account is running it),
+  sign-ins and sign-outs by email, and phones it turned away; never tokens.
+- **Only one copy runs.** A second copy (say, one started by hand while the task is running) now stops straight away
+  with "port 8790 is already in use" in the log. Earlier, a second copy could share the port and turn phones away.
 - **Updating:** replace `mp_auth.py` and restart the task. Signed-in phones stay signed in.
 - **Tests:** `python -I test_mp_auth.py` (Google is faked).

@@ -18,11 +18,13 @@ Standard library only. See SETUP.md beside this file.
 """
 import base64
 import ctypes
+import getpass
 import hashlib
 import html
 import json
 import os
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -208,7 +210,12 @@ class Helper:
         with self.lock:
             sess = self.sessions.get(kid)
             cached = self.cache.get(kid)
+        if not sess:   # another copy may have saved it since this one loaded: look again before turning it away
+            with self.lock:
+                self.sessions = {**self._load(), **self.sessions}
+                sess = self.sessions.get(kid)
         if not sess:
+            log("token asked for by a phone this helper doesn't know")
             return 401, {'error': 'unknown device'}
         if cached and cached[1] - time.time() > 300:
             return 200, {'access_token': cached[0], 'expires_in': int(cached[1] - time.time())}
@@ -249,8 +256,32 @@ class Helper:
         return 204
 
 
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mp-auth.log')   # Task Scheduler drops the console
+
+
 def log(msg):
-    print(time.strftime('%Y-%m-%d %H:%M:%S'), msg, flush=True)
+    line = time.strftime('%Y-%m-%d %H:%M:%S') + ' ' + msg
+    print(line, flush=True)
+    if not LOG_FILE:
+        return
+    try:
+        if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 1_000_000:
+            os.replace(LOG_FILE, LOG_FILE + '.old')
+        with open(LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(line + '\n')
+    except OSError:
+        pass
+
+
+class Server(ThreadingHTTPServer):
+    """Only one copy may listen. On Windows the usual "reuse address" lets a second copy share the port and answer
+    some of the requests, so a phone could be turned away by the copy that never saw it sign in."""
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 PAGE = """<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -347,8 +378,14 @@ def main():
         cfg = json.load(f)
     helper = Helper(cfg)
     host, port = cfg.get('host', '127.0.0.1'), int(cfg.get('port', 8790))
-    log(f'Meal Planner sign-in helper on http://{host}:{port} for {helper.public_url} ({len(helper.sessions)} phones signed in)')
-    ThreadingHTTPServer((host, port), make_handler(helper)).serve_forever()
+    try:
+        srv = Server((host, port), make_handler(helper))
+    except OSError:
+        log(f'Not started: port {port} is already in use (is another copy of the helper running?)')
+        sys.exit(1)
+    log(f'Meal Planner sign-in helper on http://{host}:{port} for {helper.public_url} '
+        f'({len(helper.sessions)} phones signed in, running as {getpass.getuser()}, process {os.getpid()})')
+    srv.serve_forever()
 
 
 if __name__ == '__main__':

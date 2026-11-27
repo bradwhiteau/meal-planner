@@ -2,6 +2,12 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## Sign-in helper fix (server only, after 2.21.1)
+- The helper on Ecto-Server refuses to start if another copy is already listening. On Windows two copies could share the
+  port, and the one that never saw a phone sign in told it "unknown device", so the phone was sent back to Google after an hour.
+- A phone it doesn't know is looked up in the saved file again before it's turned away.
+- It writes `mp-auth.log`, since Task Scheduler throws the console away.
+
 ## 2.21.1
 
 - **Sign-in helper switched on** (`meals.feralservers.au`). On each phone, tap the chip once: the app goes to Google,
