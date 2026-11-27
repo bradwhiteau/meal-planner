@@ -1320,11 +1320,12 @@
     const gis = c.w.google.accounts.oauth2.initTokenClient;
     c.w.google.accounts.oauth2.initTokenClient = cfg => { popups++; return gis(cfg); };
     const calls = [], driveFetch = c.w.fetch;
-    let helperUp = true;
+    let helperUp = true, blips = 0;
     c.w.fetch = async (url, opts = {}) => {
       url = String(url);
       if (!url.startsWith('https://auth.test/')) return driveFetch(url, opts);
       if (!helperUp) throw new TypeError('Load failed');
+      if (url.endsWith('/redeem') && blips > 0) { blips--; throw new TypeError('Load failed'); }
       const path = new URL(url).pathname, key = ((opts.headers || {}).Authorization || '').slice(7);
       calls.push(`${path} ${key}`);
       const json = (o, status = 200) => new c.w.Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
@@ -1348,6 +1349,7 @@
     t.has("A sign-in this phone didn't start is ignored", c.toast(), "didn't come from this phone");
     t.ok('…without collecting its code', !calls.some(x => x.startsWith('/redeem')), calls);
 
+    blips = 2;   // 2.21.2: the connection drops for a moment just after coming back from Google
     await c.w.__mp.helperReturn(`#mp-auth-state=${state}&mp-auth-code=once-1`);
     await sleep(100);
     t.has('Back from Google: signed in', c.toast(), 'stays signed in');

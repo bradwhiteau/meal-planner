@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.21.1';
+  const APP_VERSION = '2.21.2';
   const SCHEMA_VERSION = 1;
   const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -1288,7 +1288,12 @@
     try { localStorage.removeItem(LS + 'authState'); } catch (e) { /* ignore */ }
     if (p.get('mp-auth-error')) return toast(p.get('mp-auth-error'));
     try {
-      const r = await helperFetch('/redeem', p.get('mp-auth-code') || '');
+      // Straight after coming back from Google the phone's connection can drop for a moment: try a few times.
+      let r;
+      for (let i = 0; ; i++) {
+        try { r = await helperFetch('/redeem', p.get('mp-auth-code') || ''); helperDownAt = 0; break; }
+        catch (e) { if (i >= 3) throw e; await new Promise(ok => setTimeout(ok, (TEST ? 100 : 1500) * (i + 1))); }
+      }
       if (!r.ok) throw new Error('Sign-in took too long: tap to try again');
       const j = await r.json();
       setAuthKey(j.key);

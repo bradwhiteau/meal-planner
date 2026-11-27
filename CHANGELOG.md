@@ -2,6 +2,10 @@
 
 Earlier versions are described in the git log (each release commit starts with its version).
 
+## 2.21.2
+- Coming back from Google through the sign-in helper, the app tries a few times to collect the sign-in instead of
+  giving up on the first dropped connection ("Couldn't reach the sign-in helper" straight after ticking the boxes).
+
 ## Sign-in helper fix (server only, after 2.21.1)
 - The helper on Ecto-Server refuses to start if another copy is already listening. On Windows two copies could share the
   port, and the one that never saw a phone sign in told it "unknown device", so the phone was sent back to Google after an hour.
